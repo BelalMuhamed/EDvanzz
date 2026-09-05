@@ -46,10 +46,14 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
     // Paginated ledger of collected payments for a month + year.
     // DASH-1: `month` accepts the unified "YYYY-MM" string (same as tracking/students) OR the
     //   legacy integer month (1-12) + separate `year`. Both optional → current local month/year.
-    // AUTH: Teacher (module) OR Assistant with Payment.ViewHistory.
+    // AUTH: Teacher (module) OR Assistant with Payment.ViewHistory — OR Payment.ViewCollectorSummary,
+    //   which is the grant that already opens their wallet screen over the very same rows. An
+    //   assistant caller is FORCE-SCOPED to their own collections below, so the widened grant adds
+    //   no data they could not already read.
     // ══════════════════════════════════════════════════════════════════════════
     [HttpGet("/api/v1/payments/collections")]
-    [ModulePermission(PaymentConstants.ModuleName, PaymentConstants.PermissionViewHistory)]
+    [ModulePermission(PaymentConstants.ModuleName, PaymentConstants.PermissionViewHistory,
+        alsoAllowPermission: PaymentConstants.PermissionViewCollectorSummary)]
     [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.Payment.CollectionsByMonthResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
@@ -77,6 +81,13 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
 
+        // Assistant → their OWN ledger, always: the caller-supplied collectedByUserId is IGNORED, so
+        // omitting it (or forging a peer's / the tutor's id) can never widen the read beyond their own
+        // collections. Mirrors the wallet / wallets / collector-summary endpoints, which have forced
+        // own-scope since the interim assistant scoping landed; this one was missed. Teacher/SuperAdmin
+        // (scope null) keep the caller's value, so their behaviour is byte-identical.
+        collectedByUserId = AssistantScopeUserId() ?? collectedByUserId;
+
         // Exact-range detection must read the RAW query text: a midnight-to-midnight exact
         // window ("…T00:00:00" → "…T00:00:00", the wallet day filter) parses to the very same
         // DateTimes as a date-only day filter ("2026-09-01"), so TimeOfDay on the bound values
@@ -102,7 +113,8 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
     // the paid/partial/prorated/unpaid student counts are anchored to asOfMonth (defaults to the
     // month of `to`) because payment status is defined per calendar month. Both dates omitted →
     // the teacher's current local month.
-    // AUTH: Teacher (module) OR Assistant with Payment.ViewCollectorSummary.
+    // AUTH: Teacher (module) OR Assistant with Payment.ViewCollectorSummary — an assistant caller is
+    //   force-scoped to their own collector figures (see below).
     // ══════════════════════════════════════════════════════════════════════════
     [HttpGet("/api/v1/payments/collections/summary")]
     [ModulePermission(PaymentConstants.ModuleName, PaymentConstants.PermissionViewCollectorSummary)]
@@ -121,6 +133,10 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
+
+        // Assistant → forced to their OWN collector figures (same rule as the ledger above), so the
+        // day strip on their screen can never report the account-wide day. Teacher/SuperAdmin unchanged.
+        collectedByUserId = AssistantScopeUserId() ?? collectedByUserId;
 
         var result = await _screenService.GetCollectionsSummaryAsync(
             teacherId.Value, fromDate, toDate, asOfMonth, sessionId, collectedByUserId);

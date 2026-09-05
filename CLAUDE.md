@@ -697,6 +697,46 @@ aggregates also defensively exclude `TeacherStudentId == null` periods.
 **Aggregates exclude orphans.** Any period-summing query that feeds a total must ignore
 `TeacherStudentId == null` rows.
 
+### 7.4a Removed collectors + the assistant's own payment screen (2026-09-05)
+
+**A removed collector is HISTORY, not roster.** The tracking collectors card
+(`GetTrackingAsync` → `CollectedByAssistant.Assistants`) is built from the WALLET roster
+(`GetAllAssistantWalletsAsync`), and an assistant's soft-delete is terminal (`AssistantCleanupJob`
+is a no-op) so their wallet row lives forever — a removed person used to surface on EVERY future
+month as a silent "0 EGP / 0 payments" card. A wallet row is now included for month *M* only when
+the collector is not removed, **or** the teacher-local `Assistant.DeletedAt` /
+`CenterAssistant.DeletedAt` falls on/after `monthStart` — removed in July ⇒ visible in July and
+every earlier month, gone from August on. This is DELIBERATE; do not "restore" the missing row.
+Two invariants hold it together: (a) delete is blocked while the wallet holds cash and kills the
+login, so a removed collector can neither collect nor confirm a departure afterwards — their
+post-removal months are always empty and the hidden rows carry no money; (b) an **activity escape
+hatch** keeps any row with a non-zero month total regardless of removal, so the visible cards always
+reconcile with `CollectedByAssistant.TotalCollected` (which stays activity-driven over ALL
+collectors). Surviving rows carry `isRemoved: true` and the app renders a muted "Removed" chip. The
+activity-driven `byCollector` on `/collections/summary` was already correct and is untouched.
+
+**The assistant's payments tab is the teacher's ledger, own-scoped.** `AssistantPaymentView` keeps
+its cash-bag card + Collect + Student-leaving actions (no withdraw — teacher-only) but its list is
+now the SAME ledger the teacher's assistant drill-in shows: `TeacherPaymentSessionCollectedCubit`
+(scope chips "collections in wallet"/"all collections", month nav, day filter + day insights,
+"collections only", amount tiers, day totals + nets, proration story rows, skeleton loading), driven
+by the shared `PaymentWalletLedgerCoordinator` / `PaymentCollectionsLedgerList` /
+`PaymentCollectionsFiltersSection` widgets that BOTH screens use — extend those, never fork them
+back per screen. Two backend gaps closed with it:
+- **Forced own-scope (was a tenant-internal IDOR).** `GET /api/v1/payments/collections` and
+  `/collections/summary` never applied `AssistantScopeUserId()`, so an assistant with
+  `Payment.ViewHistory` could omit `collectedByUserId` and read the tutor's WHOLE ledger, or forge a
+  peer's id. Both now do `collectedByUserId = AssistantScopeUserId() ?? collectedByUserId`, mirroring
+  the wallet / wallets / collector-summary endpoints. Teacher/SuperAdmin behaviour is unchanged.
+- **`ModulePermission(..., alsoAllowPermission:)`** — an optional SECOND permission that also
+  satisfies a gate (checked only after the primary fails, and never past a module-not-assigned
+  failure). Widen-only by construction: no existing caller can lose access. Used on
+  `/api/v1/payments/collections` so `ViewCollectorSummary` — the grant that already opens the
+  assistant's wallet over the very same rows — passes too, otherwise the rebuilt tab would 403 for
+  assistants whose tutor granted only that. Argument binding for the extra ctor string is positional
+  through `ActivatorUtilities`; it was verified against all four attribute shapes (module+permission,
+  +alsoAllow, roleOnly, module-only) before shipping.
+
 ### 7.4b Billing start date — tenant-wide billing floor (added 2026-09-03)
 
 `TeacherConfiguration.BillingStartDate` (nullable, teacher-local, always first-of-month) is an

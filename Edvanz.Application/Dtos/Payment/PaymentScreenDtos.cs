@@ -900,6 +900,12 @@ public class TrackingAssistantDto
     /// <summary>Cash this assistant currently holds for the teacher (their wallet balance).
     /// 0 for the teacher row.</summary>
     public decimal WalletBalance { get; set; }
+
+    /// <summary>True when this collector's account has been REMOVED (soft-deleted) from the
+    /// teacher. The row survives only in months up to and including the removal month (see
+    /// <c>GetTrackingAsync</c>), so clients mark it as history instead of showing a card for
+    /// someone who is no longer on the account. Always false for the teacher row.</summary>
+    public bool IsRemoved { get; set; }
 }
 
 public class TrackingBySessionsDto

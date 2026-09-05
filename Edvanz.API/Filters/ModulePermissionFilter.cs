@@ -23,6 +23,7 @@ namespace Edvanz.API.Filters
     {
         private readonly string _module;
         private readonly string? _permission;
+        private readonly string? _alsoAllowPermission;
         private readonly IAuthorizationService _authService;
         private readonly IStringLocalizer<Messages> _localizer;
         private readonly bool _roleOnly;
@@ -34,10 +35,12 @@ namespace Edvanz.API.Filters
             string[] roles,
             IAuthorizationService authService,
             IStringLocalizer<Messages> localizer,
-            bool roleOnly = false)
+            bool roleOnly = false,
+            string alsoAllowPermission = "")
         {
             _module = module;
             _permission = string.IsNullOrWhiteSpace(permission) ? null : permission;
+            _alsoAllowPermission = string.IsNullOrWhiteSpace(alsoAllowPermission) ? null : alsoAllowPermission;
             _roles = roles ?? Array.Empty<string>();
             _authService = authService;
             _localizer = localizer;
@@ -71,6 +74,20 @@ namespace Edvanz.API.Filters
 
             if (result.Succeeded)
                 return;
+
+            // Optional second grant (see ModulePermissionAttribute.alsoAllowPermission): re-check
+            // against the same module. Widen-only — the primary permission still passes on its own,
+            // so no existing caller can lose access. A module-not-assigned failure short-circuits:
+            // no permission in a module the tutor scope doesn't have can rescue the request.
+            if (_alsoAllowPermission is not null
+                && result.Failure?.FailureReasons
+                    .Any(r => r.Message == PermissionHandler.ModuleNotAssignedReason) != true)
+            {
+                var fallback = await _authService.AuthorizeAsync(
+                    user, null, new PermissionRequirement(_module, _alsoAllowPermission));
+                if (fallback.Succeeded)
+                    return;
+            }
 
             bool moduleNotAssigned = result.Failure?.FailureReasons
                 .Any(r => r.Message == PermissionHandler.ModuleNotAssignedReason) == true;

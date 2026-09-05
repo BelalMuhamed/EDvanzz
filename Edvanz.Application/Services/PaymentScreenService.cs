@@ -1521,9 +1521,35 @@ public class PaymentScreenService : IPaymentScreenService
                 WalletBalance = 0m
             });
 
-        // One row per assistant (from wallets = the full roster), overlaying this month's collection
-        // totals where present. AssistantId is the wallet-navigation id; WalletBalance is cash held.
+        // REMOVED collectors are HISTORY, not roster (2026-09-05). Soft-deleting an assistant is
+        // terminal (AssistantCleanupJob is a no-op) and their wallet row lives forever, so the
+        // roster-driven list above used to show a removed person on EVERY future month as a silent
+        // "0 EGP / 0 payments" card. A removed collector now survives only through their removal
+        // MONTH — deleted in July ⇒ visible in July and every earlier month, gone from August on —
+        // so the months they actually worked keep their history and later months read true.
+        // Safe by construction: delete is blocked while the wallet holds cash and login is killed on
+        // delete, so a removed collector can neither collect nor confirm a departure afterwards and
+        // their post-removal months are always empty. The activity escape hatch below is a belt for
+        // any path that could still attribute money to them — a row with money is NEVER hidden, so
+        // the visible cards always reconcile with CollectedByAssistant.TotalCollected.
+        bool IsVisibleThisMonth(Domain.Entities.AssistantWallet w)
+        {
+            var removedAtUtc = w.Assistant?.DeletedAt ?? w.CenterAssistant?.DeletedAt;
+            if (removedAtUtc is null)
+                return true;
+            if (collectorByUser.TryGetValue(w.AssistantUserId, out var activity)
+                && (activity.TransactionCount != 0 || activity.Collected != 0m))
+                return true;
+            // Teacher-local removal day vs the teacher-local month being viewed (monthStart is a
+            // naive local date), so a late-night removal is judged on the teacher's calendar.
+            return _timeZoneService.ConvertUtcToLocal(removedAtUtc.Value).Date >= monthStart;
+        }
+
+        // One row per assistant (from wallets = the full roster, minus collectors removed before this
+        // month), overlaying this month's collection totals where present. AssistantId is the
+        // wallet-navigation id; WalletBalance is cash held.
         var assistantRows = wallets
+            .Where(IsVisibleThisMonth)
             .Select(w =>
             {
                 // Value-tuple: a missing key yields a default (all-zero) tuple, so month totals
@@ -1539,7 +1565,10 @@ public class PaymentScreenService : IPaymentScreenService
                     TransactionCount = c.TransactionCount,
                     CollectedAmount = c.Collected,
                     AssistantId = (w.AssistantId ?? w.CenterAssistantId ?? 0).ToString(CultureInfo.InvariantCulture),
-                    WalletBalance = w.CurrentBalance
+                    WalletBalance = w.CurrentBalance,
+                    // Marks the surviving history rows so the app can label them instead of showing a
+                    // normal card for someone no longer on the account.
+                    IsRemoved = (w.Assistant?.DeletedAt ?? w.CenterAssistant?.DeletedAt) is not null
                 };
             })
             // Most relevant first: collected this month, then those still holding cash, then name.
