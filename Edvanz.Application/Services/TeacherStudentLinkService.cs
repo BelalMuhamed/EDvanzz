@@ -1,4 +1,4 @@
-using Edvanz.Application.Dtos;
+﻿using Edvanz.Application.Dtos;
 using Edvanz.Application.Dtos.TeacherLinks;
 using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
@@ -405,12 +405,13 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
 
     /// <inheritdoc />
     public async Task<Result<LinkedStudentsPageResponse>> GetLinkedStudentsAsync(
-        long teacherId, int page, int pageSize, string? search = null)
+        long teacherId, int page, int pageSize, string? search = null,
+        LinkedStudentFilter filter = LinkedStudentFilter.All)
     {
         (page, pageSize) = NormalizePaging(page, pageSize);
 
-        var (rows, totalCount, linkedCount) = await _unitOfWork.Users
-            .GetActiveLinkedStudentsForTeacherPagedAsync(teacherId, page, pageSize, search);
+        var (rows, allCount, linkedCount, filteredCount) = await _unitOfWork.Users
+            .GetActiveLinkedStudentsForTeacherPagedAsync(teacherId, page, pageSize, search, filter);
 
         var items = rows.Select(r => new LinkedStudentListItemDto
         {
@@ -441,10 +442,18 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
             data = items,
             page = page,
             pageSize = pageSize,
-            totalCount = totalCount,
-            totalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+            // totalCount/totalPages describe the FILTERED slice because they are the paging
+            // contract — the client stops fetching at page * pageSize >= totalCount, so reporting
+            // the unfiltered size here would send it chasing empty pages. With the default
+            // All filter these equal allCount, so existing clients see byte-identical numbers.
+            totalCount = filteredCount,
+            totalPages = (int)Math.Ceiling(filteredCount / (double)pageSize),
+            // The chip counts, by contrast, describe the whole searched set — they have to keep
+            // answering "how many are on the OTHER tab" while a filter is applied. Note
+            // unlinkedCount is derived from allCount, never from totalCount, which is now filtered.
+            allCount = allCount,
             linkedCount = linkedCount,
-            unlinkedCount = totalCount - linkedCount,
+            unlinkedCount = allCount - linkedCount,
             deviceLockEnabled = config?.IsDeviceLockEnabled ?? false,
             linkedStudentCapacity = linkedCapacity,
             // Clamped: a limit lowered below current usage reads as "0 left", never negative.

@@ -153,4 +153,28 @@ public class StudentDeparture : BaseEntity
     /// on the negative collections-ledger line. Null for AmountOwed/NoObligation or historical rows.
     /// </summary>
     public DateTime? RefundPeriodStart { get; set; }
+
+    // ══════════════════════════════════════════════
+    // DEPARTURE STORY (the card explains the settled figure, REQ-PAY-072/075)
+    // ══════════════════════════════════════════════
+
+    /// <summary>
+    /// First day of the month the whole calculation was anchored on — by construction the LAST month
+    /// the student actually paid for (see GetDepartureSummaryAsync), or the teacher-local current
+    /// month when they never paid in this session.
+    ///
+    /// Distinct from <see cref="RefundPeriodStart"/>, which is stamped ONLY on a non-zero refund and
+    /// therefore vanishes exactly when the tutor waives the refund — the case the departure card most
+    /// needs to explain. Always stamped. Null only on rows written before this shipped.
+    /// </summary>
+    public DateTime? AnchorPeriodStart { get; set; }
+
+    /// <summary>
+    /// Cash the student had actually paid for the anchored month at the moment of departure.
+    ///
+    /// Must be SNAPSHOTTED: <c>ReverseDeparturePeriodAsync</c> decrements the period's AmountPaid as
+    /// part of the refund, so this figure is unreconstructable afterwards. Null on historical rows.
+    /// </summary>
+    [Column(TypeName = "decimal(10,2)")]
+    public decimal? PaidAmountAtDeparture { get; set; }
 }

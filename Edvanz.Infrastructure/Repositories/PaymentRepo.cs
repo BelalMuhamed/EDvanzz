@@ -2390,22 +2390,18 @@
 
         /// <inheritdoc />
         public async Task<(IReadOnlyList<DepartureListRow> Items, int TotalCount)> GetDeparturesPagedAsync(
-            long teacherId, string? search, int page, int pageSize)
+            long teacherId, string? search, int page, int pageSize,
+            DateTime? fromInclusive = null, DateTime? toExclusive = null)
         {
-            var query = _context.StudentDepartures.Where(d => d.TeacherId == teacherId);
-
-            if (!string.IsNullOrWhiteSpace(search))
-            {
-                string s = ArabicTextNormalizer.Normalize(search.Trim());
-                query = query.Where(d =>
-                    (d.StudentName != null && DbSearch.ArabicNormalize(d.StudentName).Contains(s))
-                    || (d.StudentCode != null && DbSearch.ArabicNormalize(d.StudentCode).Contains(s)));
-            }
+            var query = BuildDeparturesQuery(teacherId, search, fromInclusive, toExclusive);
 
             int total = await query.CountAsync();
 
             var items = await query
+                // Id is the tiebreak: DepartedAt is datetime2(0), so same-second departures would
+                // otherwise order non-deterministically and duplicate/drop rows across pages.
                 .OrderByDescending(d => d.DepartedAt)
+                .ThenByDescending(d => d.Id)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .Select(d => new DepartureListRow
@@ -2425,11 +2421,63 @@
                     TotalOccurrencesInPeriod = d.TotalOccurrencesInPeriod,
                     FullPeriodAmount = d.FullPeriodAmount,
                     ProRatedAmount = d.ProRatedAmount,
+                    OriginalCalculatedAmount = d.OriginalCalculatedAmount,
+                    AnchorPeriodStart = d.AnchorPeriodStart,
+                    PaidAmountAtDeparture = d.PaidAmountAtDeparture,
                 })
                 .AsNoTracking()
                 .ToListAsync();
 
             return (items, total);
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<DepartureDayTotalRow>> GetDepartureDayTotalsAsync(
+            long teacherId, string? search, DateTime? fromInclusive = null, DateTime? toExclusive = null)
+        {
+            // Grouped over the WHOLE filtered scope (never one page) so the day-separator figures are
+            // final and do not shift as the client pages in more rows — same contract as the
+            // collections ledger's daily nets.
+            return await BuildDeparturesQuery(teacherId, search, fromInclusive, toExclusive)
+                .GroupBy(d => d.DepartedAt.Date)
+                .Select(g => new DepartureDayTotalRow
+                {
+                    Date = g.Key,
+                    DepartedCount = g.Count(),
+                    // The SETTLED figure, so a waived refund correctly contributes 0 to the day.
+                    RefundedTotal = g.Sum(d =>
+                        d.DepartureOutcome == DepartureOutcome.RefundDue ? d.FinalAmount : 0m),
+                    OwedTotal = g.Sum(d =>
+                        d.DepartureOutcome == DepartureOutcome.AmountOwed ? d.FinalAmount : 0m),
+                })
+                .OrderByDescending(x => x.Date)
+                .AsNoTracking()
+                .ToListAsync();
+        }
+
+        /// <summary>
+        /// The one filter definition shared by the departures page and its day totals — keeping them
+        /// in a single place is what guarantees the separators sum to the rows on screen.
+        /// </summary>
+        private IQueryable<StudentDeparture> BuildDeparturesQuery(
+            long teacherId, string? search, DateTime? fromInclusive, DateTime? toExclusive)
+        {
+            var query = _context.StudentDepartures.Where(d => d.TeacherId == teacherId);
+
+            if (fromInclusive.HasValue)
+                query = query.Where(d => d.DepartedAt >= fromInclusive.Value);
+            if (toExclusive.HasValue)
+                query = query.Where(d => d.DepartedAt < toExclusive.Value);
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                string s = ArabicTextNormalizer.Normalize(search.Trim());
+                query = query.Where(d =>
+                    (d.StudentName != null && DbSearch.ArabicNormalize(d.StudentName).Contains(s))
+                    || (d.StudentCode != null && DbSearch.ArabicNormalize(d.StudentCode).Contains(s)));
+            }
+
+            return query;
         }
 
         /// <inheritdoc />

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -375,6 +375,7 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
         StudentName = grant.TeacherStudent?.StudentName,
         StudentCode = grant.TeacherStudent?.StudentCode,
         ClaimedPhone = grant.ClaimedPhone,
+        ParentName = grant.ParentName,
         // Both flags read the SAME already-materialized roster row that supplies StudentName /
         // StudentCode above (GetPendingForTeacherPagedAsync Includes it), so this is pure
         // projection — no extra query, no N+1.
@@ -393,6 +394,7 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
         StudentName = student?.StudentName,
         StudentCode = student?.StudentCode,
         ClaimedPhone = grant.ClaimedPhone,
+        ParentName = grant.ParentName,
         Status = grant.Status,
         AutoApproved = grant.AutoApproved,
         Origin = grant.Origin,

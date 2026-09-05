@@ -442,11 +442,17 @@ namespace Edvanz.Domain.Interfaces
         /// Pages the Active links of a teacher (their linked students), newest first,
         /// joined to account identity and the bound TeacherStudent roster record. Optional
         /// <paramref name="search"/> filters by the account name/code and bound roster name/code
-        /// (case-insensitive substring); the total/linked counts reflect the filtered set.
+        /// (case-insensitive substring); the total/linked counts reflect the searched set.
+        ///
+        /// <paramref name="filter"/> narrows the returned PAGE only — TotalCount and LinkedCount are
+        /// always counted over the whole searched set so the caller can render filter chips whose
+        /// numbers describe the available choices rather than the slice already on screen.
+        /// FilteredCount is the size of the narrowed slice, for paging.
         /// </summary>
-        Task<(IReadOnlyList<TeacherLinkedStudentRow> Items, int TotalCount, int LinkedCount)>
+        Task<(IReadOnlyList<TeacherLinkedStudentRow> Items, int TotalCount, int LinkedCount, int FilteredCount)>
             GetActiveLinkedStudentsForTeacherPagedAsync(
-                long teacherId, int page, int pageSize, string? search = null);
+                long teacherId, int page, int pageSize, string? search = null,
+                LinkedStudentFilter filter = LinkedStudentFilter.All);
 
         /// <summary>
         /// All of a teacher's Active links that are NOT currently bound to any roster

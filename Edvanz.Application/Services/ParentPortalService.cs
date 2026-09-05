@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -138,6 +138,19 @@ public sealed class ParentPortalService : IParentPortalService
                     _localizer, "ParentPortalPhoneFormat", HttpStatusCode.BadRequest);
         }
 
+        // The parent's self-declared name. Optional on the wire (the portal deploys after the API)
+        // but length-checked when present so a stray paste cannot overflow the column. No
+        // normalization: nothing ever compares this value, unlike ClaimedPhone.
+        string? parentName = null;
+        if (!string.IsNullOrWhiteSpace(dto.ParentName))
+        {
+            parentName = dto.ParentName.Trim();
+            if (parentName.Length < ParentPortalConstants.ParentNameMinLength
+                || parentName.Length > ParentPortalConstants.ParentNameMaxLength)
+                return Result<ParentPortalAccessRequestResultDto>.Failure(
+                    _localizer, "ParentPortalNameLength", HttpStatusCode.BadRequest);
+        }
+
         var now = DateTime.UtcNow;
         var windowStart = now - AbuseWindow;
 
@@ -213,6 +226,27 @@ public sealed class ParentPortalService : IParentPortalService
             .GetLiveByStudentAndDeviceAsync(student.Id, deviceHash);
         if (existing is not null)
         {
+            // Backfill the name onto a grant that predates this field. A parent who was approved
+            // before names existed lands here every time their portal session lapses and they
+            // re-enter the codes; without this their teacher would never see a name for them.
+            // Fill-only — a stored name is never overwritten from an unauthenticated request, so
+            // this cannot be used to rewrite an approved follower's identity.
+            if (parentName is not null && string.IsNullOrWhiteSpace(existing.ParentName))
+            {
+                existing.ParentName = parentName;
+                try
+                {
+                    await _unitOfWork.ParentPortalAccesses.UpdateAsync(existing);
+                    await _unitOfWork.SaveChangesAsync();
+                }
+                catch (Exception ex)
+                {
+                    // Cosmetic enrichment: never fail the parent's sign-in over it.
+                    _logger.LogWarning(ex,
+                        "Parent portal: could not backfill the parent name on grant {GrantId}", existing.Id);
+                }
+            }
+
             return existing.Status == ParentPortalAccessStatus.Active
                 ? ActiveResult(teacherName, student)
                 : PendingResult(teacherName);
@@ -268,6 +302,7 @@ public sealed class ParentPortalService : IParentPortalService
             DeviceHash = deviceHash,
             Status = grantActive ? ParentPortalAccessStatus.Active : ParentPortalAccessStatus.Pending,
             ClaimedPhone = claimedPhone,
+            ParentName = parentName,
             AutoApproved = rosterPhoneMatches,
             Origin = origin,
             RequestedAt = now,

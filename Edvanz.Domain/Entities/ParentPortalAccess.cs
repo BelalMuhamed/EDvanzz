@@ -1,4 +1,4 @@
-using Edvanz.Domain.Entities.ShareProp;
+﻿using Edvanz.Domain.Entities.ShareProp;
 using Edvanz.Domain.Enums;
 
 namespace Edvanz.Domain.Entities;
@@ -70,6 +70,21 @@ public class ParentPortalAccess : BaseEntity
     /// scoped, and the teacher usually has the number on the roster anyway).
     /// </summary>
     public string? ClaimedPhone { get; set; }
+
+    /// <summary>
+    /// The name the parent typed for themselves when requesting access ("Ahmed's mum", "Mona Samir").
+    ///
+    /// Self-declared and UNVERIFIED — this is a recognition aid for the teacher deciding whether to
+    /// approve, never an identity or an authentication factor. The portal form requires it; the API
+    /// keeps it optional so the already-deployed portal cannot start 400-ing the moment this ships,
+    /// and so historical rows stay valid. Trimmed and length-checked, never normalized further:
+    /// unlike ClaimedPhone nothing compares this column, so there is no canonical form to preserve.
+    ///
+    /// Deliberately NOT echoed on the "pending" response — that payload is byte-identical across
+    /// three different outcomes on purpose, and any branch-dependent field re-opens the
+    /// student-code enumeration oracle.
+    /// </summary>
+    public string? ParentName { get; set; }
 
     /// <summary>
     /// True ONLY when the grant skipped the approval queue because <see cref="ClaimedPhone"/>

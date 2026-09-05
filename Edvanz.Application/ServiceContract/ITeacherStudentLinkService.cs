@@ -1,5 +1,6 @@
-using Edvanz.Application.Dtos;
+﻿using Edvanz.Application.Dtos;
 using Edvanz.Application.Dtos.TeacherLinks;
+using Edvanz.Domain.Enums;
 
 namespace Edvanz.Application.ServiceContract;
 
@@ -109,9 +110,13 @@ public interface ITeacherStudentLinkService
     /// Pages the teacher's linked students (Active links), newest first, with both
     /// the account identity and the bound roster record. Optional <paramref name="search"/>
     /// filters by the account name/code and the bound roster name/code (case-insensitive).
+    ///
+    /// <paramref name="filter"/> narrows the returned page to bound / not-yet-bound accounts;
+    /// the response's chip headcounts stay counted over the whole searched set regardless.
     /// </summary>
     Task<Result<LinkedStudentsPageResponse>> GetLinkedStudentsAsync(
-        long teacherId, int page, int pageSize, string? search = null);
+        long teacherId, int page, int pageSize, string? search = null,
+        LinkedStudentFilter filter = LinkedStudentFilter.All);
 
     /// <summary>
     /// SUPER-ADMIN ONLY: lists a teacher's Active links that are NOT yet bound to

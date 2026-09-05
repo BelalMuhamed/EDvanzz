@@ -1,8 +1,9 @@
-using Edvanz.API.Attributes;
+﻿using Edvanz.API.Attributes;
 using Edvanz.Application.Dtos.TeacherLinks;
 using Edvanz.Application.IservicesContract;
 using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
+using Edvanz.Domain.Enums;
 using Edvanz.Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -309,12 +310,17 @@ public class TeacherStudentLinksController : ModuleSixApiBaseController
     public async Task<IActionResult> GetLinkedStudents(
         [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
         // Optional filter over the student's account name/code and bound roster name/code.
-        [FromQuery] string? search = null)
+        [FromQuery] string? search = null,
+        // All (default) | Linked | NotLinked. Narrows the returned page only — the response's
+        // allCount/linkedCount/unlinkedCount stay counted over the whole searched set so the
+        // client's filter chips keep showing what is on the tab the user is NOT looking at.
+        [FromQuery] LinkedStudentFilter filter = LinkedStudentFilter.All)
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
 
-        var result = await _linkService.GetLinkedStudentsAsync(teacherId.Value, page, pageSize, search);
+        var result = await _linkService.GetLinkedStudentsAsync(
+            teacherId.Value, page, pageSize, search, filter);
         return ToResponse(result);
     }
 

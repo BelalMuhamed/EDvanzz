@@ -672,7 +672,16 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
 
     /// <summary>Teacher-wide paged list of departed students (search by name/code), newest first.</summary>
     Task<(IReadOnlyList<DepartureListRow> Items, int TotalCount)> GetDeparturesPagedAsync(
-        long teacherId, string? search, int page, int pageSize);
+        long teacherId, string? search, int page, int pageSize,
+        DateTime? fromInclusive = null, DateTime? toExclusive = null);
+
+    /// <summary>
+    /// Per-day departure totals over the whole filtered scope (all pages) — the source for the
+    /// departed-students list's day-separator headers. Takes the same filters as
+    /// <see cref="GetDeparturesPagedAsync"/> so the totals always reconcile with the rows shown.
+    /// </summary>
+    Task<IReadOnlyList<DepartureDayTotalRow>> GetDepartureDayTotalsAsync(
+        long teacherId, string? search, DateTime? fromInclusive = null, DateTime? toExclusive = null);
 
     /// <summary>
     /// Counts student departures confirmed in [startInclusive, endExclusive), split by outcome

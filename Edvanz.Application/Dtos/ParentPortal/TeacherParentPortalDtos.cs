@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using Edvanz.Domain.Enums;
 
 namespace Edvanz.Application.Dtos.ParentPortal;
@@ -29,6 +29,13 @@ public class ParentPortalRequestListItemDto
 
     /// <summary>The full normalized number the parent typed (e.g. "01012345678"). Null when they skipped it.</summary>
     public string? ClaimedPhone { get; set; }
+
+    /// <summary>
+    /// The name the parent gave for themselves. Self-declared and UNVERIFIED — a recognition aid
+    /// for the teacher, never proof of identity. Null on grants created before the portal asked
+    /// for it, so the client must still render a row that has only a phone number.
+    /// </summary>
+    public string? ParentName { get; set; }
 
     /// <summary>
     /// Does the number this parent TYPED equal the one saved on the student? On a PENDING row it
@@ -73,6 +80,9 @@ public class ParentPortalFollowerListItemDto
 
     /// <summary>The full normalized number the parent typed (e.g. "01012345678"), or null.</summary>
     public string? ClaimedPhone { get; set; }
+
+    /// <summary>The parent's self-declared name; null on grants that predate the portal asking for it.</summary>
+    public string? ParentName { get; set; }
 
     /// <summary>Serialized as a string: "Active" or "Pending".</summary>
     public ParentPortalAccessStatus Status { get; set; }

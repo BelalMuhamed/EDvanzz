@@ -793,6 +793,46 @@ public class DepartureListItemDto
     public decimal ProRatedAmount { get; set; }
     /// <summary>Payment status at departure (Paid | PartiallyPaid | Unpaid | …) — drives "didn't pay" copy.</summary>
     public string PaymentStatusAtDeparture { get; set; } = string.Empty;
+
+    // ── The story: why this figure, and whether a human changed it (REQ-PAY-075) ──
+
+    /// <summary>What the system calculated before any tutor override — the "should have been 200".</summary>
+    public decimal OriginalCalculatedAmount { get; set; }
+    /// <summary>True when the tutor settled on a figure other than the calculated one (0 included).</summary>
+    public bool IsTutorOverride { get; set; }
+    /// <summary>
+    /// True when the tutor waived a refund entirely (overrode a RefundDue down to 0). Lets the client
+    /// label the row honestly instead of rendering the contradictory "Refunded 0".
+    /// </summary>
+    public bool IsWaivedRefund { get; set; }
+    /// <summary>
+    /// First day of the anchored month — by construction the LAST month the student paid for.
+    /// Null on rows recorded before this was captured; clients must degrade gracefully.
+    /// </summary>
+    public DateTime? AnchorPeriodStart { get; set; }
+    /// <summary>Cash paid for the anchored month at departure. Null on historical rows.</summary>
+    public decimal? PaidAmountAtDeparture { get; set; }
+    /// <summary>
+    /// Stable calendar-day key ("yyyy-MM-dd") of the raw UTC DepartedAt — the client groups the list
+    /// into day sections by this string. Matches <c>CollectionRow.DayKey</c> so both ledgers bucket
+    /// days identically (never re-derive it from a local date on the client).
+    /// </summary>
+    public string DayKey { get; set; } = string.Empty;
+}
+
+/// <summary>One calendar day's totals in the departed-students list — drives the day-separator header.</summary>
+public class DepartureDailyTotalDto
+{
+    /// <summary>Stable calendar-day key ("yyyy-MM-dd") — matches <see cref="DepartureListItemDto.DayKey"/>.</summary>
+    public string DateKey { get; set; } = string.Empty;
+    /// <summary>The calendar day (date component only).</summary>
+    public DateTime Date { get; set; }
+    /// <summary>How many students departed on this day.</summary>
+    public int DepartedCount { get; set; }
+    /// <summary>Total actually refunded on this day (a waived refund contributes 0).</summary>
+    public decimal RefundedTotal { get; set; }
+    /// <summary>Total recorded as still owed on this day.</summary>
+    public decimal OwedTotal { get; set; }
 }
 
 /// <summary>Paged response for the departed-students list.</summary>
@@ -803,6 +843,11 @@ public class DeparturesResponse
     public int TotalItems { get; set; }
     public int TotalPages { get; set; }
     public List<DepartureListItemDto> Departures { get; set; } = new();
+    /// <summary>
+    /// Per-day totals across the WHOLE filtered scope (not just this page), so the day-separator
+    /// figures stay correct as the client pages in more rows.
+    /// </summary>
+    public List<DepartureDailyTotalDto> DailyTotals { get; set; } = new();
 }
 
 // ══════════════════════════════════════════════════════════════════════════

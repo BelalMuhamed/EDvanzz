@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using Edvanz.Application.Dtos.Attendance;
 using Edvanz.Application.Dtos.ParentUser;
 using Edvanz.Application.Dtos.Payment;
@@ -34,6 +34,16 @@ public class ParentPortalAccessRequestDto
     /// accepted (Arabic-Indic digits, spaces, +20 …) — it is normalized server-side.
     /// </summary>
     public string? PhoneNumber { get; set; }
+
+    /// <summary>
+    /// The parent's own name, so the teacher can tell who is asking instead of judging a bare phone
+    /// number. Self-declared and unverified.
+    ///
+    /// REQUIRED by the portal's sign-in form, but intentionally OPTIONAL here: the API deploys ahead
+    /// of the portal, so demanding it on the wire would make the live portal start failing the
+    /// moment this ships. Validated for length only when supplied.
+    /// </summary>
+    public string? ParentName { get; set; }
 
     /// <summary>
     /// Opaque per-browser id minted by the portal. Only its SHA-256 is stored; the raw value never

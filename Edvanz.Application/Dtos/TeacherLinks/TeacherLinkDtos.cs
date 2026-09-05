@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace Edvanz.Application.Dtos.TeacherLinks;
 
@@ -148,10 +148,23 @@ public class LinkedStudentListItemDto
 /// </summary>
 public class LinkedStudentsPageResponse : PaginatedResponse<List<LinkedStudentListItemDto>>
 {
-    /// <summary>Active links bound to a roster record (<c>TeacherStudentId != null</c>).</summary>
+    /// <summary>
+    /// Every Active link in the searched set, ignoring the <c>filter</c> parameter — the "All" chip's
+    /// number. Equals <c>totalCount</c> whenever no status filter is applied.
+    /// </summary>
+    public int allCount { get; set; }
+
+    /// <summary>
+    /// Active links bound to a student record (<c>TeacherStudentId != null</c>). Counted over the
+    /// whole searched set and NOT narrowed by the <c>filter</c> parameter, so the chips can keep
+    /// showing how many rows sit on the tab you are not currently looking at.
+    /// </summary>
     public int linkedCount { get; set; }
 
-    /// <summary>Active links not yet bound to a roster record (= totalCount − linkedCount).</summary>
+    /// <summary>
+    /// Active links not yet bound to a student record (= <see cref="allCount"/> − linkedCount).
+    /// Note this is derived from allCount, NOT from totalCount, which reflects the filtered slice.
+    /// </summary>
     public int unlinkedCount { get; set; }
 
     /// <summary>

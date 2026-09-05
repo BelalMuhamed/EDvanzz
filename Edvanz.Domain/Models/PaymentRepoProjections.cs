@@ -1,4 +1,4 @@
-namespace Edvanz.Domain.Interfaces;
+﻿namespace Edvanz.Domain.Interfaces;
 
 // ════════════════════════════════════════════════════════════════════════════
 // PAYMENT MODULE (MODULE 4) — REPOSITORY PROJECTION TYPES
@@ -291,4 +291,28 @@ public sealed class DepartureListRow
     public decimal FullPeriodAmount { get; set; }
     /// <summary>The attendance-prorated amount (what the student's attended sessions are worth).</summary>
     public decimal ProRatedAmount { get; set; }
+
+    /// <summary>What the system calculated BEFORE the tutor overrode it (the "should have been 200").</summary>
+    public decimal OriginalCalculatedAmount { get; set; }
+    /// <summary>First day of the anchored month — by construction the last month the student paid for.</summary>
+    public DateTime? AnchorPeriodStart { get; set; }
+    /// <summary>Cash the student had paid for the anchored month at departure time.</summary>
+    public decimal? PaidAmountAtDeparture { get; set; }
+}
+
+/// <summary>
+/// One calendar day's departure totals — the source for the departed-list day-separator headers.
+/// Computed over the whole filtered scope (all pages), so the figures are final, mirroring
+/// <c>CollectionDailyNet</c> on the collections ledger.
+/// </summary>
+public sealed class DepartureDayTotalRow
+{
+    /// <summary>The calendar day (UTC date component of DepartedAt).</summary>
+    public DateTime Date { get; set; }
+    /// <summary>How many students departed on this day.</summary>
+    public int DepartedCount { get; set; }
+    /// <summary>Total actually refunded to students on this day (settled amounts, waived ones contribute 0).</summary>
+    public decimal RefundedTotal { get; set; }
+    /// <summary>Total students were still recorded as owing on this day.</summary>
+    public decimal OwedTotal { get; set; }
 }

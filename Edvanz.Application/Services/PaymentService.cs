@@ -2530,15 +2530,41 @@ public class PaymentService : IPaymentService
     // DEPARTURE
     // ══════════════════════════════════════════════
 
+    /// <summary>
+    /// Normalizes a bound query DateTime to a true UTC instant. Local is converted;
+    /// Unspecified is taken at face value (the client sent UTC); Utc passes through.
+    /// </summary>
+    private static DateTime? ToUtcBound(DateTime? value) => value switch
+    {
+        null => null,
+        { Kind: DateTimeKind.Local } v => v.ToUniversalTime(),
+        var v => v
+    };
+
     /// <inheritdoc />
     public async Task<Result<DeparturesResponse>> GetDeparturesAsync(
-        long teacherId, string? search, int page, int limit)
+        long teacherId, string? search, int page, int limit,
+        DateTime? from = null, DateTime? to = null)
     {
         page = page < 1 ? 1 : page;
         limit = limit < 1 ? 20 : (limit > 100 ? 100 : limit);
 
+        // DepartedAt is stored as UTC, so the bounds must be UTC too. ASP.NET binds a
+        // query DateTime through DateTime.Parse, which turns a "…Z" instant into the
+        // SERVER's local time — a no-op on the UTC App Service this runs on, and a
+        // silent whole-timezone shift anywhere else. Normalizing here makes the filter
+        // independent of where it is hosted without changing today's behaviour by a tick.
+        from = ToUtcBound(from);
+        to = ToUtcBound(to);
+
         var (rows, total) = await _unitOfWork.PaymentsRepo
-            .GetDeparturesPagedAsync(teacherId, search, page, limit);
+            .GetDeparturesPagedAsync(teacherId, search, page, limit, from, to);
+
+        // Day totals span the whole filtered scope, not just this page, so the day-separator figures
+        // stay correct as the client pages in more rows. Skipped when there is nothing to separate.
+        var dayTotals = rows.Count == 0
+            ? (IReadOnlyList<DepartureDayTotalRow>)Array.Empty<DepartureDayTotalRow>()
+            : await _unitOfWork.PaymentsRepo.GetDepartureDayTotalsAsync(teacherId, search, from, to);
 
         var response = new DeparturesResponse
         {
@@ -2562,6 +2588,26 @@ public class PaymentService : IPaymentService
                 FullPeriodAmount = r.FullPeriodAmount,
                 ProRatedAmount = r.ProRatedAmount,
                 PaymentStatusAtDeparture = r.PaymentStatusAtDeparture.ToString(),
+                OriginalCalculatedAmount = r.OriginalCalculatedAmount,
+                IsTutorOverride = r.IsTutorOverride,
+                // A refund that WAS calculated but the tutor settled at nothing. The row stays
+                // outcome RefundDue on purpose (downgrading it to NoObligation would erase the fact
+                // that a refund was owed), so the client needs this flag to avoid rendering the
+                // self-contradictory "Refunded 0".
+                IsWaivedRefund = r.DepartureOutcome == DepartureOutcome.RefundDue
+                    && r.IsTutorOverride && r.FinalAmount <= 0m,
+                AnchorPeriodStart = r.AnchorPeriodStart,
+                PaidAmountAtDeparture = r.PaidAmountAtDeparture,
+                DayKey = r.DepartedAt.ToString(
+                    "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            }).ToList(),
+            DailyTotals = dayTotals.Select(t => new DepartureDailyTotalDto
+            {
+                DateKey = t.Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                Date = t.Date,
+                DepartedCount = t.DepartedCount,
+                RefundedTotal = t.RefundedTotal,
+                OwedTotal = t.OwedTotal,
             }).ToList(),
         };
 
@@ -2766,6 +2812,13 @@ public class PaymentService : IPaymentService
                 DepartureOutcome = summary.DepartureOutcome,
                 ConfirmedByUserId = dto.ConfirmedByUserId,
                 DepartedAt = DateTime.UtcNow,
+                // The story the departed-students card tells. Stamped for EVERY outcome — unlike
+                // RefundPeriodStart, which is set only on a non-zero refund and so disappears in
+                // exactly the case that needs explaining most (the tutor waiving the refund).
+                // PaidAmountAtDeparture must be snapshotted here: ReverseDeparturePeriodAsync
+                // decrements the period's AmountPaid below, making it unreconstructable after.
+                AnchorPeriodStart = summary.PeriodStart,
+                PaidAmountAtDeparture = summary.PaidAmount,
                 CreateAt = DateTime.UtcNow
             };
             await _unitOfWork.PaymentsRepo.AddStudentDepartureAsync(departure);

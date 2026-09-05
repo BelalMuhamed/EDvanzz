@@ -1441,10 +1441,10 @@
     <value>وحدة الفيديوهات متوقفة دلوقتي</value>
   </data>
   <data name="InvalidUrl" xml:space="preserve">
-    <value>الرابط مش صحيح. ياريت تحط رابط YouTube أو Google Drive صحيح</value>
+    <value>الرابط مش مظبوط. حط لينك يوتيوب — زي https://www.youtube.com/watch?v=…</value>
   </data>
   <data name="UnsupportedSource" xml:space="preserve">
-    <value>بندعم بس فيديوهات YouTube و Google Drive</value>
+    <value>التطبيق بيشغّل فيديوهات يوتيوب بس. حط لينك يوتيوب بدل ده.</value>
   </data>
   <data name="ScopeShapeInvalid" xml:space="preserve">
     <value>بيانات الوصول مش مظبوطة. ياريت تعمل ريفريش وتجرب تاني</value>
@@ -2610,6 +2610,9 @@
   <data name="ParentPortalPhoneFormat" xml:space="preserve">
     <value>اكتب رقم موبايل مصري صح — ١١ رقم ويبدأ بـ 01 — أو سيبه فاضي.</value>
   </data>
+  <data name="ParentPortalNameLength" xml:space="preserve">
+    <value>اكتب اسمك عشان المدرس يعرف مين اللي بيطلب — من حرفين لـ ٦٠ حرف.</value>
+  </data>
   <data name="ParentPortalDisabled" xml:space="preserve">
     <value>المدرس لسه مفعّلش متابعة أولياء الأمور. كلّمه يفعّلها من إعدادات التطبيق.</value>
   </data>
@@ -2687,5 +2690,8 @@
   </data>
   <data name="LinkedStudentCapacityExceedsStudentCapacity" xml:space="preserve">
     <value>الحد الأقصى لحسابات الطلاب على التطبيق مش ممكن يكون أكبر من عدد الطلاب في الحساب. قلّله، أو زوّد عدد الطلاب.</value>
+  </data>
+  <data name="VideoSourceMustBeYouTube" xml:space="preserve">
+    <value>لينكات جوجل درايف مبتشتغلش جوه تطبيق الطالب. ارفع الفيديو على يوتيوب (unlisted تمام) وحط اللينك بتاعه.</value>
   </data>
 </root>

@@ -228,8 +228,15 @@ public interface IPaymentService
     /// </summary>
     Task<Result<StudentDepartureDto>> ConfirmDepartureAsync(ConfirmDepartureDto dto);
 
-    /// <summary>Teacher-wide paged list of departed students (search by name/code), newest first.</summary>
-    Task<Result<DeparturesResponse>> GetDeparturesAsync(long teacherId, string? search, int page, int limit);
+    /// <summary>
+    /// Teacher-wide paged list of departed students (search by name/code), newest first, with the
+    /// per-day totals that drive the list's day-separator headers.
+    /// </summary>
+    /// <param name="from">Inclusive lower bound on DepartedAt (UTC instant). Null = unbounded.</param>
+    /// <param name="to">EXCLUSIVE upper bound on DepartedAt (UTC instant). Null = unbounded.</param>
+    Task<Result<DeparturesResponse>> GetDeparturesAsync(
+        long teacherId, string? search, int page, int limit,
+        DateTime? from = null, DateTime? to = null);
 
     // ══════════════════════════════════════════════
     // SESSION TRANSFER (REQ-PAY-085 through 092)

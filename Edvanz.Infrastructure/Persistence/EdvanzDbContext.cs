@@ -2450,6 +2450,8 @@ public class EdvanzDbContext(DbContextOptions<EdvanzDbContext> options) : DbCont
             entity.Property(d => d.OriginalCalculatedAmount).HasColumnType("decimal(10,2)");
             entity.Property(d => d.DepartedAt).HasColumnType("datetime2(0)").IsRequired();
             entity.Property(d => d.RefundPeriodStart).HasColumnType("datetime2(0)");
+            entity.Property(d => d.AnchorPeriodStart).HasColumnType("datetime2(0)");
+            entity.Property(d => d.PaidAmountAtDeparture).HasColumnType("decimal(10,2)");
 
             entity.Property(d => d.SessionName).HasMaxLength(PaymentConstants.NameMaxLength).IsRequired();
             entity.Property(d => d.StudentName).HasMaxLength(PaymentConstants.NameMaxLength);
@@ -4582,6 +4584,7 @@ modelBuilder.Entity<AssignmentTemplate>(entity =>
             // Compared with a plain equality by the trusted-phone rule and by phone-wide
             // revocation, and always written through EgyptianPhoneNumber.Normalize.
             entity.Property(a => a.ClaimedPhone).HasMaxLength(20);
+            entity.Property(a => a.ParentName).HasMaxLength(ParentPortalConstants.ParentNameMaxLength);
             entity.Property(a => a.RequestIpHash).HasMaxLength(64);
             entity.Property(a => a.UserAgent).HasMaxLength(256);
 

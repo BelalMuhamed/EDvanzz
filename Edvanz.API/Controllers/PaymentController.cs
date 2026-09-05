@@ -665,9 +665,15 @@ public sealed class PaymentController : ModuleSixApiBaseController
 
     // ══════════════════════════════════════════════════════════════════════════
     // DEPARTED STUDENTS LIST
-    // GET api/payment/departures?search=&page=&limit=
+    // GET api/payment/departures?search=&page=&limit=&from=&to=
     // Teacher-wide list of departed students (from the permanent StudentDeparture
     // records), newest first. AUTH: Payment.Collect (Teacher/SuperAdmin auto-pass).
+    //
+    // from/to bound DepartedAt as [from, to) over RAW UTC INSTANTS — DepartedAt is UTC and the
+    // per-row dayKey is derived from it, so the client must send full instants ('Z'), never bare
+    // dates. That is a deliberate contract, not an inference: the collections endpoint's habit of
+    // guessing intent from whether a value carried a time component is exactly what mis-scoped the
+    // wallet day filter, and these are brand-new parameters with no legacy caller to accommodate.
     // ══════════════════════════════════════════════════════════════════════════
     [HttpGet("departures")]
     [ModulePermission(PaymentConstants.ModuleName, PaymentConstants.PermissionCollect)]
@@ -675,12 +681,14 @@ public sealed class PaymentController : ModuleSixApiBaseController
     [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> GetDepartures(
-        [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int limit = 20)
+        [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int limit = 20,
+        [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null)
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
 
-        var result = await _paymentService.GetDeparturesAsync(teacherId.Value, search, page, limit);
+        var result = await _paymentService.GetDeparturesAsync(
+            teacherId.Value, search, page, limit, from, to);
         return ToResponse(result);
     }
 

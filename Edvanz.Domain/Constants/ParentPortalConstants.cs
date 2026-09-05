@@ -1,4 +1,4 @@
-namespace Edvanz.Domain.Constants;
+﻿namespace Edvanz.Domain.Constants;
 
 /// <summary>
 /// Single-sourced constants for the PUBLIC parent portal (parent.edvanz.io → this API,
@@ -22,6 +22,12 @@ public static class ParentPortalConstants
 
     /// <summary>Route prefix of the public portal controller.</summary>
     public const string RouteBase = "api/parent-portal";
+
+    /// <summary>Shortest accepted parent name. Below this it cannot help a teacher recognise anyone.</summary>
+    public const int ParentNameMinLength = 2;
+
+    /// <summary>Longest stored parent name; matches the column width on ParentPortalAccesses.</summary>
+    public const int ParentNameMaxLength = 60;
 
     /// <summary>Grant states as returned on the wire (lowercase, stable — the PHP/Flutter clients branch on these).</summary>
     public static class States

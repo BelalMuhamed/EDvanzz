@@ -1438,10 +1438,10 @@
     <value>The video module is currently disabled for this teacher</value>
   </data>
   <data name="InvalidUrl" xml:space="preserve">
-    <value>The video URL is invalid. Please paste a valid YouTube or Google Drive link</value>
+    <value>The video link isn't valid. Paste a YouTube link — for example https://www.youtube.com/watch?v=…</value>
   </data>
   <data name="UnsupportedSource" xml:space="preserve">
-    <value>Only YouTube and Google Drive videos are supported</value>
+    <value>Only YouTube videos can be played in the app. Paste a YouTube link instead.</value>
   </data>
   <data name="ScopeShapeInvalid" xml:space="preserve">
     <value>The access target is malformed. Please refresh and try again</value>
@@ -2622,6 +2622,9 @@
   <data name="ParentPortalPhoneFormat" xml:space="preserve">
     <value>Enter a valid Egyptian mobile number — 11 digits starting with 01 — or leave it empty.</value>
   </data>
+  <data name="ParentPortalNameLength" xml:space="preserve">
+    <value>Write your name so the teacher knows who's asking — between 2 and 60 letters.</value>
+  </data>
   <data name="ParentPortalDisabled" xml:space="preserve">
     <value>This teacher hasn't turned on parent follow-up yet. Ask them to enable it from the app settings.</value>
   </data>
@@ -2699,5 +2702,8 @@
   </data>
   <data name="LinkedStudentCapacityExceedsStudentCapacity" xml:space="preserve">
     <value>The student app accounts limit can't be higher than the number of students in the account. Lower it, or raise the students limit.</value>
+  </data>
+  <data name="VideoSourceMustBeYouTube" xml:space="preserve">
+    <value>Google Drive links don't play inside the student app. Upload the video to YouTube (unlisted works) and paste that link.</value>
   </data>
 </root>

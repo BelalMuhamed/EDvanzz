@@ -722,9 +722,10 @@ namespace Edvanz.Infrastructure.Repositories
         }
 
         /// <inheritdoc />
-        public async Task<(IReadOnlyList<TeacherLinkedStudentRow> Items, int TotalCount, int LinkedCount)>
+        public async Task<(IReadOnlyList<TeacherLinkedStudentRow> Items, int TotalCount, int LinkedCount, int FilteredCount)>
             GetActiveLinkedStudentsForTeacherPagedAsync(
-                long teacherId, int page, int pageSize, string? search = null)
+                long teacherId, int page, int pageSize, string? search = null,
+                LinkedStudentFilter filter = LinkedStudentFilter.All)
         {
             // A student who deleted / deactivated their account (User.IsActive == false) must
             // never surface in the teacher's "My Students" list, even if a link row was somehow
@@ -771,10 +772,25 @@ namespace Edvanz.Infrastructure.Repositories
             // whole (optionally filtered) Active set, not just the returned page, so headcounts match.
             int linked = await joined.CountAsync(x => x.l.TeacherStudentId != null);
 
+            // ── The status filter narrows the PAGE ONLY, deliberately AFTER both counts above. ──
+            // These counts feed the client's filter chips ("All 42 · Linked 30 · Not linked 12"), so
+            // narrowing the query before counting would collapse them to (N, 0) or (0, N) — the chips
+            // would then report the size of the slice you are already looking at instead of the
+            // choices available. Search DOES narrow them, because a search re-defines the whole set.
+            var pageQuery = filter switch
+            {
+                LinkedStudentFilter.Linked => joined.Where(x => x.l.TeacherStudentId != null),
+                LinkedStudentFilter.NotLinked => joined.Where(x => x.l.TeacherStudentId == null),
+                _ => joined
+            };
+
             // The roster record is null when the teacher deleted the TeacherStudent after linking
             // (SetNull FK — degraded enrollment state).
-            var items = await joined
+            var items = await pageQuery
                 .OrderByDescending(x => x.l.LinkedAt)
+                // LinkedAt alone is not unique enough to page deterministically once a teacher
+                // accepts several requests in the same instant; Id is the stable tiebreak.
+                .ThenByDescending(x => x.l.Id)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .Select(x => new TeacherLinkedStudentRow
@@ -792,7 +808,16 @@ namespace Edvanz.Infrastructure.Repositories
                 })
                 .ToListAsync();
 
-            return (items, total, linked);
+            // TotalCount stays the size of the UNFILTERED (but searched) set. The service derives the
+            // page count from the filtered slice instead — see GetLinkedStudentsAsync.
+            int filteredTotal = filter switch
+            {
+                LinkedStudentFilter.Linked => linked,
+                LinkedStudentFilter.NotLinked => total - linked,
+                _ => total
+            };
+
+            return (items, total, linked, filteredTotal);
         }
 
         /// <inheritdoc />
