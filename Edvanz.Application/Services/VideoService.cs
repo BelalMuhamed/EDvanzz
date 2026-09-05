@@ -474,6 +474,18 @@ public sealed class VideoService : IVideoService
                     return Result<VideoDetailDto>.Failure(_localizer, urlErrorKey, HttpStatusCode.BadRequest);
                 }
 
+                // Same rule as create. Deliberately inside the changed-URL
+                // branch: a teacher editing the title of an OLD Drive-backed
+                // video must still be able to save. Only pointing a video AT a
+                // Drive link is refused.
+                if (parseOutcome.Success!.SourceType != VideoSourceType.YouTube)
+                {
+                    if (ownsTransaction)
+                        await _unitOfWork.RollbackAsync();
+                    return Result<VideoDetailDto>.Failure(
+                        _localizer, VideoConstants.Messages.VideoSourceMustBeYouTube, HttpStatusCode.BadRequest);
+                }
+
                 video.SourceUrl = newSourceUrl;
                 video.SourceType = parseOutcome.Success!.SourceType;
                 video.ExternalId = parseOutcome.Success.ExternalId;
@@ -1927,6 +1939,14 @@ public sealed class VideoService : IVideoService
             return Result<CreateVideoResponse>.Failure(
                 _localizer, urlErrorKey, HttpStatusCode.BadRequest);
         }
+
+        // A Drive link parses fine and used to be stored happily — then every
+        // student who opened the video got "unsupported source", because no
+        // client ships a Drive player. Reject it at the door with a message
+        // that says what to do instead.
+        if (parseOutcome.Success!.SourceType != VideoSourceType.YouTube)
+            return Result<CreateVideoResponse>.Failure(
+                _localizer, VideoConstants.Messages.VideoSourceMustBeYouTube, HttpStatusCode.BadRequest);
 
         // Files (video photo/attachment) were already uploaded via POST /api/upload and validated
         // there (type/size). Here we only reference them by id; type/size are not re-checked.

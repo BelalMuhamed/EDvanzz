@@ -158,6 +158,17 @@ public static class VideoConstants
         public const string ModuleDeactivated            = "ModuleDeactivated";
         public const string InvalidUrl                   = "InvalidUrl";
         public const string UnsupportedSource            = "UnsupportedSource";
+
+        /// <summary>
+        /// The URL parsed to a provider the student app cannot play — in
+        /// practice Google Drive. The parser and <see cref="Domain.Enums.VideoSourceType"/>
+        /// still accept Drive (and the service still builds its /preview embed
+        /// URL), but no client has a Drive player, so a Drive-backed video is
+        /// created successfully and then shows every student "unsupported
+        /// source". Creating one is rejected here instead; existing rows are
+        /// left alone because the update path only re-parses a CHANGED URL.
+        /// </summary>
+        public const string VideoSourceMustBeYouTube     = "VideoSourceMustBeYouTube";
         public const string ScopeTargetNotFoundOrForeign = "ScopeTargetNotFoundOrForeign";
         public const string ScopeShapeInvalid            = "ScopeShapeInvalid";
         public const string ScopeCannotBeEmpty           = "ScopeCannotBeEmpty";
