@@ -27,11 +27,13 @@ public interface ICapacityIncreaseRequestRepo : IGenericRepo<CapacityIncreaseReq
     Task<CapacityIncreaseRequest?> GetByIdForAdminAsync(long requestId);
 
     /// <summary>
-    /// Returns true if the teacher has a live Pending request. Used to short-circuit a
-    /// duplicate submit — the filtered unique index UX_CapacityIncreaseRequests_Teacher_Pending
-    /// is the DB-level backstop for the same rule.
+    /// Returns true if the teacher has a live Pending request FOR THIS KIND of limit
+    /// (account students vs. linked student app accounts). Used to short-circuit a duplicate
+    /// submit — the filtered unique index UX_CapacityIncreaseRequests_Teacher_Kind_Pending
+    /// is the DB-level backstop for the same rule. The two kinds queue independently, so a
+    /// pending account-students request never blocks a linked-accounts request.
     /// </summary>
-    Task<bool> HasPendingRequestAsync(long teacherId);
+    Task<bool> HasPendingRequestAsync(long teacherId, Enums.CapacityKind capacityKind);
 
     /// <summary>
     /// Paginated admin queue of Pending requests, ordered RequestedAt ASC (FIFO — oldest

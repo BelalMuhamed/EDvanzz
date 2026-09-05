@@ -6,6 +6,7 @@ using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Enums;
+using Edvanz.Domain.Helpers;
 using Edvanz.Domain.Interfaces;
 using Edvanz.Domain.Resources;
 using Edvanz.Domain.ServiceContract;
@@ -529,7 +530,20 @@ public class CenterService : ICenterService
             if (!string.IsNullOrWhiteSpace(dto.FullName) && user != null)
                 user.FullName = dto.FullName.Trim();
             if (dto.PlanType.HasValue) teacher.CenterPlanType = dto.PlanType.Value;
-            if (dto.StudentCapacity.HasValue) teacher.StudentCapacity = dto.StudentCapacity.Value;
+            if (dto.StudentCapacity.HasValue)
+            {
+                // A center manages ONE capacity number per teacher, and center-owned teachers are
+                // covered by the center's own subscription (their per-teacher limits are quota,
+                // not price). So the edited number governs BOTH limits — otherwise a teacher the
+                // center raised to 2,000 would stay blocked at their old student-app-account limit
+                // with no knob anywhere in the center UI to fix it.
+                teacher.StudentCapacity = dto.StudentCapacity.Value;
+                teacher.LinkedStudentCapacity = dto.StudentCapacity.Value;
+                // A no-op while both are assigned the same number, but every write path that
+                // touches LinkedStudentCapacity runs the shared rule so the invariant survives
+                // any future edit to the two lines above.
+                TeacherCapacityRules.EnforceInvariant(teacher);
+            }
             // Overrides are set UNCONDITIONALLY (including to null) so the edit form can clear an
             // override back to "inherit center default" — the form always sends the intended value.
             teacher.RevenueSharePercentOverride = dto.RevenueSharePercentOverride;

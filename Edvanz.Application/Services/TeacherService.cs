@@ -136,6 +136,14 @@ public class TeacherService : ITeacherService
         if (dto.SubjectIds.Count == 0 && string.IsNullOrWhiteSpace(dto.CustomSubject))
             return Result<TeacherProfileDto>.Failure(_localizer, "SubjectRequired", HttpStatusCode.BadRequest);
 
+        // An EXPLICIT student-app-account limit may not exceed the students limit — a linked
+        // account always needs a student record behind it. Told to the caller rather than silently
+        // clamped, so the admin sees that the number they typed was not the number that stuck.
+        // (Null skips this entirely and mirrors StudentCapacity below — old-client behaviour.)
+        if (dto.LinkedStudentCapacity is > 0 && dto.LinkedStudentCapacity > dto.StudentCapacity)
+            return Result<TeacherProfileDto>.Failure(
+                _localizer, "LinkedStudentCapacityExceedsStudentCapacity", HttpStatusCode.BadRequest);
+
         bool ownsTransaction = !_unitOfWork.HasActiveTransaction;
 
         if (ownsTransaction)
@@ -152,6 +160,13 @@ public class TeacherService : ITeacherService
                 UserId = dto.UserId,
                 TeacherCode = teacherCode,
                 StudentCapacity = dto.StudentCapacity,
+                // Supplied ⇒ honour it; null ⇒ the two limits start EQUAL, because the requested
+                // capacity is then both how many students may exist in the account and how many
+                // app accounts may be linked (and priced). Without that fallback a teacher created
+                // at 2,000 would silently be capped — and billed — at the column default of 500.
+                LinkedStudentCapacity = dto.LinkedStudentCapacity is > 0
+                    ? dto.LinkedStudentCapacity.Value
+                    : dto.StudentCapacity,
                 LanguagePreference = dto.LanguagePreference,
                 CustomSubject = dto.CustomSubject?.Trim(),
                 AccountStatus = AccountStatus.Active,
@@ -159,6 +174,10 @@ public class TeacherService : ITeacherService
                 CreatedByUserId = dto.CreatedByUserId,
                 CreateAt = DateTime.UtcNow
             };
+
+            // Safety net for the invariant (validated above, so normally a no-op) — the ONE
+            // implementation, shared with the admin capacity paths.
+            TeacherCapacityRules.EnforceInvariant(teacher);
 
             await _unitOfWork.Users.AddTeacherAsync(teacher);
             await _unitOfWork.SaveChangesAsync();
@@ -337,6 +356,9 @@ public class TeacherService : ITeacherService
                 // fallback (int.MaxValue would overflow capacity × rate pricing).
                 teacher.StudentCapacity = selectedPackage.MaxStudents
                     ?? SubscriptionConstants.UnlimitedPackageFallbackCapacity;
+                // The picked tier is the teacher's whole plan at onboarding, so it sets the
+                // student-app-account limit (which the price follows) to the same number.
+                teacher.LinkedStudentCapacity = teacher.StudentCapacity;
             }
 
             await _unitOfWork.Users.UpdateTeacherAsync(teacher);
@@ -525,6 +547,9 @@ public class TeacherService : ITeacherService
                 // fallback (int.MaxValue would overflow capacity × rate pricing).
                 teacher.StudentCapacity = package.MaxStudents
                     ?? SubscriptionConstants.UnlimitedPackageFallbackCapacity;
+                // The picked tier is the teacher's whole plan at onboarding, so it sets the
+                // student-app-account limit (which the price follows) to the same number.
+                teacher.LinkedStudentCapacity = teacher.StudentCapacity;
                 await _unitOfWork.Users.UpdateTeacherAsync(teacher);
             }
 
@@ -1014,6 +1039,10 @@ public class TeacherService : ITeacherService
             .GetActiveStudentCountsAsync(pagedTeacherIds);
         var linkedCounts = await _unitOfWork.studentTeacherLinkRepo
             .GetActiveLinkedCountsAsync(pagedTeacherIds);
+        // Seat usage (BOUND links) — batched exactly like the connected count above, so the page
+        // still costs a fixed number of queries no matter how many teachers it shows.
+        var boundLinkedCounts = await _unitOfWork.studentTeacherLinkRepo
+            .GetBoundLinkedCountsAsync(pagedTeacherIds);
         var assistantStats = await _unitOfWork.AssistantRepo
             .GetAssistantActivityStatsAsync(pagedTeacherIds);
         var sessionCounts = await _unitOfWork.SessionsRepo
@@ -1045,8 +1074,10 @@ public class TeacherService : ITeacherService
                 TeacherCode = x.Teacher.TeacherCode,
                 PhoneNumber = x.User?.PhoneNumber,
                 StudentCapacity = x.Teacher.StudentCapacity,
+                LinkedStudentCapacity = x.Teacher.LinkedStudentCapacity,
                 StudentCount = studentCounts.GetValueOrDefault(x.Teacher.Id, 0),
                 LinkedStudentCount = linkedCounts.GetValueOrDefault(x.Teacher.Id, 0),
+                LinkedStudentsUsed = boundLinkedCounts.GetValueOrDefault(x.Teacher.Id, 0),
                 SessionCount = sessionCounts.GetValueOrDefault(x.Teacher.Id, 0),
                 AccountStatus = x.Teacher.AccountStatus.ToString(),
                 IsConfigurationCompleted = x.Teacher.IsConfigurationCompleted,
@@ -1123,6 +1154,11 @@ public class TeacherService : ITeacherService
         var subscriptionResult = await GetActiveSubscriptionAsync(teacherId);
         bool isSubscribed = await _subscriptionGate.HasActiveSubscriptionAsync(teacherId);
 
+        // Consumed student-app-account seats (BOUND links only) — the number the admin compares
+        // against LinkedStudentCapacity when deciding whether to raise or lower it.
+        int linkedStudentsUsed = await _unitOfWork.studentTeacherLinkRepo
+            .CountBoundLinksAsync(teacherId);
+
         return new TeacherProfileDto
         {
             IsSubscribed = isSubscribed,
@@ -1133,6 +1169,8 @@ public class TeacherService : ITeacherService
             Email = user.Email,
             PhoneNumber = user.PhoneNumber,
             StudentCapacity = teacher.StudentCapacity,
+            LinkedStudentCapacity = teacher.LinkedStudentCapacity,
+            LinkedStudentsUsed = linkedStudentsUsed,
             LanguagePreference = teacher.LanguagePreference,
             CustomSubject = teacher.CustomSubject,
             AccountStatus = teacher.AccountStatus.ToString(),

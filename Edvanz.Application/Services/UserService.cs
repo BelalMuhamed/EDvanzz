@@ -194,6 +194,9 @@ namespace Edvanz.Application.Services
                             // 500 aligns the entity default, CreateTeacherDto default, and
                             // REQ-STU-002 (this path used to say 50 — the lone outlier).
                             StudentCapacity = user.studentCapacity ?? 500,
+                            // Null flows through as null — InitializeTeacherAsync then mirrors
+                            // StudentCapacity, preserving pre-existing behaviour for old clients.
+                            LinkedStudentCapacity = user.linkedStudentCapacity,
                             SubjectIds = user.subjectIds ?? new List<long>()
                         };
 

@@ -17,6 +17,13 @@ public class SubscriptionRequestDto
     /// <summary>Requested student count (0 for Managerial).</summary>
     public int RequestedStudents { get; set; }
 
+    /// <summary>
+    /// Requested student APP ACCOUNT count — the number the fee was computed from
+    /// (0 for the managerial plans). Rows submitted by app builds that predate this field
+    /// carry 0 and were priced off <see cref="RequestedStudents"/>.
+    /// </summary>
+    public int RequestedLinkedStudents { get; set; }
+
     /// <summary>Server-computed fee at submission time, in EGP.</summary>
     public decimal ComputedAmountEGP { get; set; }
 

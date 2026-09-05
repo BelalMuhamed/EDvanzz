@@ -89,10 +89,14 @@ public class SubscriptionService : ISubscriptionService
                 _localizer, SubscriptionConstants.Messages.NoActiveSubscription, HttpStatusCode.NotFound);
         }
 
-        // Load the renewal price separately — plan-aware: Full = Teacher.StudentCapacity × the
-        // per-student rate; the managerial plans = their flat price. Not stored on the
+        // The limit the Full-plan price is computed from, so the screen can show the two together.
+        // Loaded ONCE and handed to the price helper — it used to fetch the same row itself.
+        var pricedTeacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
+
+        // Load the renewal price separately — plan-aware: Full = Teacher.LinkedStudentCapacity ×
+        // the per-student rate; the managerial plans = their flat price. Not stored on the
         // subscription row (BR-SUB-009).
-        decimal renewalAmount = await ComputeRenewalPriceAsync(teacherId, projection.PlanType);
+        decimal renewalAmount = await ComputeRenewalPriceAsync(pricedTeacher, projection.PlanType);
 
         // SubscriptionStatusCalculator.Derive expects a TeacherSubscription instance.
         // Build a transient one from the projection's two dates — IsCurrent = true so
@@ -112,7 +116,8 @@ public class SubscriptionService : ISubscriptionService
             DaysRemaining = SubscriptionStatusCalculator.DeriveDaysRemaining(subForStatus, DateTime.UtcNow),
             Status = SubscriptionStatusCalculator.Derive(subForStatus, DateTime.UtcNow),
             PlanType = projection.PlanType,
-            RenewalAmountEGP = renewalAmount
+            RenewalAmountEGP = renewalAmount,
+            LinkedStudentCapacity = pricedTeacher?.LinkedStudentCapacity ?? 0
         };
 
         return Result<CurrentSubscriptionDto>.Success(dto, _localizer);
@@ -129,6 +134,13 @@ public class SubscriptionService : ISubscriptionService
         bool hasPending = await _unitOfWork.SubscriptionRequestsRepo.HasPendingRequestAsync(teacherId);
         string? whatsApp = string.IsNullOrWhiteSpace(_support.WhatsAppNumber) ? null : _support.WhatsAppNumber;
 
+        // Student-app-account seats: the limit the price is based on, plus live usage (Active AND
+        // bound links only). Reported on BOTH branches — a teacher with no subscription still has
+        // a limit, and the app renders "X of Y app accounts used" either way.
+        var seatTeacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
+        int linkedCapacity = seatTeacher?.LinkedStudentCapacity ?? 0;
+        int linkedUsed = await _unitOfWork.studentTeacherLinkRepo.CountBoundLinksAsync(teacherId);
+
         // Brand-new tutor (or a purged subscription) — no subscription at all.
         if (projection is null)
         {
@@ -140,6 +152,11 @@ public class SubscriptionService : ISubscriptionService
                 CtaType = hasPending ? "none" : "subscribe",
                 HasPendingRequest = hasPending,
                 WhatsAppNumber = whatsApp,
+                Features = new SubscriptionFeaturesDto
+                {
+                    LinkedStudentCapacity = linkedCapacity,
+                    LinkedStudentsUsed = linkedUsed
+                },
                 Message = hasPending
                     ? _localizer[SubscriptionConstants.Messages.SubscriptionStatusRequestPending]
                     : _localizer[SubscriptionConstants.Messages.SubscriptionStatusNone]
@@ -154,7 +171,7 @@ public class SubscriptionService : ISubscriptionService
         };
         var status = SubscriptionStatusCalculator.Derive(subForStatus, DateTime.UtcNow);
         int daysRemaining = SubscriptionStatusCalculator.DeriveDaysRemaining(subForStatus, DateTime.UtcNow);
-        decimal renewalAmount = await ComputeRenewalPriceAsync(teacherId, projection.PlanType);
+        decimal renewalAmount = await ComputeRenewalPriceAsync(seatTeacher, projection.PlanType);
 
         // ALL presentation logic decided here so the client renders it verbatim.
         string attention;
@@ -192,7 +209,9 @@ public class SubscriptionService : ISubscriptionService
             StudentAccountsAllowed = !planIsLive
                 || !SubscriptionPlanCapabilities.BlocksStudentAndParentAccounts(projection.PlanType),
             ParentFollowUpAllowed = !planIsLive
-                || !SubscriptionPlanCapabilities.BlocksParentFollowUp(projection.PlanType)
+                || !SubscriptionPlanCapabilities.BlocksParentFollowUp(projection.PlanType),
+            LinkedStudentCapacity = linkedCapacity,
+            LinkedStudentsUsed = linkedUsed
         };
 
         return Result<SubscriptionStatusDto>.Success(new SubscriptionStatusDto
@@ -257,17 +276,22 @@ public class SubscriptionService : ISubscriptionService
                 _localizer, SubscriptionConstants.Messages.PerStudentRateNotConfigured);
         }
 
-        // ── Server-authoritative fee: Full = students × rate; the two managerial plans are flat. ──
+        // ── Server-authoritative fee: Full = student APP ACCOUNTS × rate; the two managerial
+        // plans are flat. Students-in-the-account is a free operational quota, so it never
+        // enters the fee. ──
         int students;
+        int linkedStudents;
         decimal amount;
         if (request.PlanType == SubscriptionPlanType.Managerial)
         {
             students = 0;
+            linkedStudents = 0;
             amount = setting.ManagerialMonthlyPriceEGP;
         }
         else if (request.PlanType == SubscriptionPlanType.ManagerialPlus)
         {
             students = 0;
+            linkedStudents = 0;
             amount = setting.ManagerialPlusMonthlyPriceEGP;
         }
         else
@@ -282,8 +306,32 @@ public class SubscriptionService : ISubscriptionService
                 return Result<SubscriptionRequestDto>.Failure(
                     _localizer, SubscriptionConstants.Messages.RequestedStudentsTooLarge);
             }
+
+            // An app build that predates the second limit sends only RequestedStudents — fall
+            // back to it so such a request is priced and granted EXACTLY as it was before.
+            int linked = request.RequestedLinkedStudents ?? request.RequestedStudents;
+
+            if (linked <= 0)
+            {
+                return Result<SubscriptionRequestDto>.Failure(
+                    _localizer, SubscriptionConstants.Messages.RequestedLinkedStudentsRequired);
+            }
+            if (linked > SubscriptionConstants.MaxStudentCapacity)
+            {
+                return Result<SubscriptionRequestDto>.Failure(
+                    _localizer, SubscriptionConstants.Messages.RequestedLinkedStudentsTooLarge);
+            }
+            // A linked account always needs a student record behind it, so app accounts can
+            // never exceed the students in the account.
+            if (linked > request.RequestedStudents)
+            {
+                return Result<SubscriptionRequestDto>.Failure(
+                    _localizer, SubscriptionConstants.Messages.RequestedLinkedStudentsExceedsAccountStudents);
+            }
+
             students = request.RequestedStudents;
-            amount = students * setting.PricePerStudentEGP;
+            linkedStudents = linked;
+            amount = linkedStudents * setting.PricePerStudentEGP;
         }
 
         if (await _unitOfWork.SubscriptionRequestsRepo.HasPendingRequestAsync(teacherId))
@@ -301,6 +349,7 @@ public class SubscriptionService : ISubscriptionService
             TeacherId = teacherId,
             PlanType = request.PlanType,
             RequestedStudents = students,
+            RequestedLinkedStudents = linkedStudents,
             ComputedAmountEGP = amount,
             Note = note,
             Status = SubscriptionRequestStatus.Pending,
@@ -387,6 +436,7 @@ public class SubscriptionService : ISubscriptionService
         Id = row.Id,
         PlanType = row.PlanType,
         RequestedStudents = row.RequestedStudents,
+        RequestedLinkedStudents = row.RequestedLinkedStudents,
         ComputedAmountEGP = row.ComputedAmountEGP,
         Status = row.Status,
         Note = row.Note,
@@ -460,10 +510,12 @@ public class SubscriptionService : ISubscriptionService
                 HttpStatusCode.Conflict);
         }
 
-        // ── Resolve the price: StudentCapacity × per-student rate (BR-SUB-009) ──
-        // "1 student = 2.5 EGP/month" — the configured capacity limit determines what
-        // the teacher pays. Snapshotted onto the pending row below, so later rate or
-        // capacity changes never alter an in-flight payment.
+        // ── Resolve the price: LinkedStudentCapacity × per-student rate (BR-SUB-009) ──
+        // "1 student app account = 2.5 EGP/month" — the student-APP-ACCOUNT limit determines
+        // what the teacher pays (students-in-the-account is a free operational quota).
+        // Snapshotted onto the pending row below, so later rate or capacity changes never alter
+        // an in-flight payment. Kept in lockstep with ComputeRenewalPriceAsync: the amount shown
+        // on the status/current screens must be the amount actually charged.
         var teacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
         if (teacher is null)
         {
@@ -487,13 +539,13 @@ public class SubscriptionService : ISubscriptionService
         // Guard the decimal(10,2) money columns: capacity must be a sane positive number.
         // Legacy int.MaxValue "unlimited" capacities were concretized by migration, but
         // fail closed here rather than overflow if an out-of-range value ever reappears.
-        if (teacher.StudentCapacity <= 0 || teacher.StudentCapacity > SubscriptionConstants.MaxStudentCapacity)
+        if (teacher.LinkedStudentCapacity <= 0 || teacher.LinkedStudentCapacity > SubscriptionConstants.MaxStudentCapacity)
         {
             return Result<RenewInitiateResponse>.Failure(
                 _localizer, SubscriptionConstants.Messages.StudentCapacityNotConfigured);
         }
 
-        decimal amountEGP = teacher.StudentCapacity * ratePerStudent.Value;
+        decimal amountEGP = teacher.LinkedStudentCapacity * ratePerStudent.Value;
 
         // ── Persist a fresh pending row in Status = Initiated ──
         var pending = new PendingSubscriptionPayment
@@ -606,12 +658,19 @@ public class SubscriptionService : ISubscriptionService
     public async Task<Result<CapacityRequestDto>> SubmitCapacityRequestAsync(
         long teacherId, long actingUserId, CreateCapacityRequestRequest request)
     {
+        // Which limit is being raised. Omitted / null = AccountStudents, so an app build that
+        // predates the student-app-account limit behaves exactly as it always did.
+        CapacityKind kind = request.CapacityKind ?? CapacityKind.AccountStudents;
+
         // ── Validation ──
         if (request.RequestedCapacity <= 0
             || request.RequestedCapacity > SubscriptionConstants.MaxStudentCapacity)
         {
             return Result<CapacityRequestDto>.Failure(
-                _localizer, SubscriptionConstants.Messages.RequestedCapacityTooLarge);
+                _localizer,
+                kind == CapacityKind.LinkedStudents
+                    ? SubscriptionConstants.Messages.RequestedLinkedStudentsTooLarge
+                    : SubscriptionConstants.Messages.RequestedCapacityTooLarge);
         }
 
         var teacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
@@ -627,14 +686,25 @@ public class SubscriptionService : ISubscriptionService
                 _localizer, "SubscriptionManagedByCenter", HttpStatusCode.Forbidden);
         }
 
+        // The current value OF THE TARGETED LIMIT — never compare a linked-accounts request
+        // against the students-in-the-account number.
+        int currentCapacity = kind == CapacityKind.LinkedStudents
+            ? teacher.LinkedStudentCapacity
+            : teacher.StudentCapacity;
+
         // Increase-only: decreases stay an admin-side operation.
-        if (request.RequestedCapacity <= teacher.StudentCapacity)
+        if (request.RequestedCapacity <= currentCapacity)
         {
             return Result<CapacityRequestDto>.Failure(
-                _localizer, SubscriptionConstants.Messages.RequestedCapacityMustExceedCurrent);
+                _localizer,
+                kind == CapacityKind.LinkedStudents
+                    ? SubscriptionConstants.Messages.LinkedCapacityIncreaseOnly
+                    : SubscriptionConstants.Messages.RequestedCapacityMustExceedCurrent);
         }
 
-        if (await _unitOfWork.CapacityRequestsRepo.HasPendingRequestAsync(teacherId))
+        // Per-kind queue: a pending students-in-the-account request must not block a
+        // student-app-account request (the filtered unique index allows one live row per kind).
+        if (await _unitOfWork.CapacityRequestsRepo.HasPendingRequestAsync(teacherId, kind))
         {
             return Result<CapacityRequestDto>.Failure(
                 _localizer, SubscriptionConstants.Messages.CapacityRequestAlreadyPending,
@@ -650,7 +720,8 @@ public class SubscriptionService : ISubscriptionService
         var row = new CapacityIncreaseRequest
         {
             TeacherId = teacherId,
-            CapacityAtRequest = teacher.StudentCapacity,
+            CapacityKind = kind,
+            CapacityAtRequest = currentCapacity,
             RequestedCapacity = request.RequestedCapacity,
             Note = note,
             Status = CapacityRequestStatus.Pending,
@@ -667,7 +738,7 @@ public class SubscriptionService : ISubscriptionService
         }
         catch (DbUpdateException ex) when (IsUniqueViolation(ex))
         {
-            // Race-loss on UX_CapacityIncreaseRequests_Teacher_Pending — a concurrent
+            // Race-loss on UX_CapacityIncreaseRequests_Teacher_Kind_Pending — a concurrent
             // submit won. Same outcome as the pre-check above.
             return Result<CapacityRequestDto>.Failure(
                 _localizer, SubscriptionConstants.Messages.CapacityRequestAlreadyPending,
@@ -736,6 +807,7 @@ public class SubscriptionService : ISubscriptionService
     private static CapacityRequestDto ToCapacityRequestDto(CapacityIncreaseRequest row) => new()
     {
         Id = row.Id,
+        CapacityKind = row.CapacityKind,
         RequestedCapacity = row.RequestedCapacity,
         CapacityAtRequest = row.CapacityAtRequest,
         Status = row.Status,
@@ -924,12 +996,13 @@ public class SubscriptionService : ISubscriptionService
     }
 
     /// <summary>
-    /// Read-time renewal price for display (GET current): StudentCapacity × per-student
-    /// rate. Returns 0 when unpriceable (teacher missing, capacity out of bounds, or the
-    /// rate not configured) — same "0 when unpriceable" semantics the package-price
-    /// resolver had, so the CurrentSubscriptionDto wire contract is unchanged.
+    /// Read-time renewal price for display (GET current): LinkedStudentCapacity × per-student
+    /// rate. The teacher pays for STUDENT APP ACCOUNTS, not for how many student records exist
+    /// in the account (that quota is free). Returns 0 when unpriceable (teacher missing, capacity
+    /// out of bounds, or the rate not configured) — same "0 when unpriceable" semantics the
+    /// package-price resolver had, so the CurrentSubscriptionDto wire contract is unchanged.
     /// </summary>
-    private async Task<decimal> ComputeRenewalPriceAsync(long teacherId, SubscriptionPlanType? planType)
+    private async Task<decimal> ComputeRenewalPriceAsync(Teacher? teacher, SubscriptionPlanType? planType)
     {
         // The two managerial plans renew at their FLAT monthly price — capacity × rate is a
         // Full-plan formula only (it used to be applied to every plan, which showed a Managerial
@@ -942,16 +1015,18 @@ public class SubscriptionService : ISubscriptionService
                 : setting?.ManagerialPlusMonthlyPriceEGP ?? 0m;
         }
 
-        var teacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
+        // The teacher is passed in, never re-fetched: both callers already hold the row (they
+        // report LinkedStudentCapacity alongside the price), and GET /status is hit on every app
+        // launch — loading it twice there was a needless extra round-trip on a hot path.
         if (teacher is null) return 0m;
 
-        if (teacher.StudentCapacity <= 0 || teacher.StudentCapacity > SubscriptionConstants.MaxStudentCapacity)
+        if (teacher.LinkedStudentCapacity <= 0 || teacher.LinkedStudentCapacity > SubscriptionConstants.MaxStudentCapacity)
             return 0m;
 
         decimal? ratePerStudent = await _unitOfWork.SubscriptionPricingRepo.GetPricePerStudentAsync();
         if (ratePerStudent is null || ratePerStudent.Value <= 0m) return 0m;
 
-        return teacher.StudentCapacity * ratePerStudent.Value;
+        return teacher.LinkedStudentCapacity * ratePerStudent.Value;
     }
 
     private static RenewStatusDto ToRenewStatusDto(PendingSubscriptionPayment pending) => new()

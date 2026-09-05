@@ -159,6 +159,20 @@ public class LinkedStudentsPageResponse : PaginatedResponse<List<LinkedStudentLi
     /// status/reset UI (the <c>isDeviceRegistered</c> flags on rows are irrelevant).
     /// </summary>
     public bool deviceLockEnabled { get; set; }
+
+    /// <summary>
+    /// How many student APP ACCOUNTS this teacher may have linked at once
+    /// (<c>Teacher.LinkedStudentCapacity</c>) — the limit the subscription price is based on.
+    /// </summary>
+    public int linkedStudentCapacity { get; set; }
+
+    /// <summary>
+    /// Seats still free: capacity minus the live BOUND-link count, clamped at 0 (never negative,
+    /// so a limit lowered below current usage reads as "0 left" rather than a negative number).
+    /// Computed over ALL of the teacher's links, so it is unaffected by the page's search filter —
+    /// unlike <see cref="linkedCount"/>.
+    /// </summary>
+    public int linkedStudentsRemaining { get; set; }
 }
 
 /// <summary>

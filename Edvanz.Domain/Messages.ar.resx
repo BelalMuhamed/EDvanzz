@@ -2104,7 +2104,7 @@
     <value>إضافة طالب</value>
   </data>
   <data name="PermissionDescription_Student_Add" xml:space="preserve">
-    <value>بيسمح بإضافة طالب جديد للقائمة.</value>
+    <value>بيسمح بإضافة طالب جديد.</value>
   </data>
   <data name="Permission_Student_Edit" xml:space="preserve">
     <value>تعديل بيانات الطالب</value>
@@ -2116,7 +2116,7 @@
     <value>حذف طالب</value>
   </data>
   <data name="PermissionDescription_Student_Delete" xml:space="preserve">
-    <value>بيسمح بحذف طالب من القائمة.</value>
+    <value>بيسمح بحذف طالب.</value>
   </data>
   <data name="Permission_Student_Import" xml:space="preserve">
     <value>استيراد طلاب</value>
@@ -2663,5 +2663,29 @@
   </data>
   <data name="BillingStartDateInvalid" xml:space="preserve">
     <value>شهر بداية الحساب ده مش مقبول. اختار شهر قريب من النهارده.</value>
+  </data>
+  <data name="LinkedStudentCapacityReached" xml:space="preserve">
+    <value>وصلت للحد الأقصى وهو {0} حساب طالب على التطبيق. شيل طالب مرتبط أو كبّر اشتراكك عشان تربط طلاب أكتر.</value>
+  </data>
+  <data name="LinkedStudentCapacityReachedCenterManaged" xml:space="preserve">
+    <value>وصلت للحد الأقصى وهو {0} حساب طالب على التطبيق. السنتر هو اللي بيحدد الرقم ده، كلّمهم يزوّدوه أو فك ربط طالب مش محتاج التطبيق.</value>
+  </data>
+  <data name="LinkedStudentCapacityUpdated" xml:space="preserve">
+    <value>تم تحديث الحد الأقصى لحسابات الطلاب على التطبيق.</value>
+  </data>
+  <data name="RequestedLinkedStudentsRequired" xml:space="preserve">
+    <value>من فضلك اكتب محتاج كام حساب طالب على التطبيق.</value>
+  </data>
+  <data name="RequestedLinkedStudentsTooLarge" xml:space="preserve">
+    <value>عدد حسابات الطلاب على التطبيق كبير جدًا.</value>
+  </data>
+  <data name="RequestedLinkedStudentsExceedsAccountStudents" xml:space="preserve">
+    <value>حسابات الطلاب على التطبيق مش ممكن تزيد عن عدد الطلاب في حسابك. زوّد عدد الطلاب في حسابك، أو اطلب حسابات أقل.</value>
+  </data>
+  <data name="LinkedCapacityIncreaseOnly" xml:space="preserve">
+    <value>العدد الجديد لحسابات الطلاب على التطبيق لازم يكون أكبر من العدد الحالي. لو عايز تقلّله كلّم الدعم.</value>
+  </data>
+  <data name="LinkedStudentCapacityExceedsStudentCapacity" xml:space="preserve">
+    <value>الحد الأقصى لحسابات الطلاب على التطبيق مش ممكن يكون أكبر من عدد الطلاب في الحساب. قلّله، أو زوّد عدد الطلاب.</value>
   </data>
 </root>

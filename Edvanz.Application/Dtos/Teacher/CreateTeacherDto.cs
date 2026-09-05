@@ -41,4 +41,15 @@ public class CreateTeacherDto
     /// REQ-ADM-006: Set by super admin during creation.
     /// </summary>
     public int StudentCapacity { get; set; } = 500;
+
+    /// <summary>
+    /// Initial student-APP-ACCOUNT limit (<c>Teacher.LinkedStudentCapacity</c>) — how many student
+    /// app accounts may be linked, and the number the subscription price is based on.
+    ///
+    /// NULLABLE ON PURPOSE: omitted / null mirrors <see cref="StudentCapacity"/>, which is exactly
+    /// what an admin build that predates this field produces — such a create is priced and limited
+    /// exactly as it was before. When supplied it must not exceed <see cref="StudentCapacity"/>
+    /// (a linked account always needs a student record).
+    /// </summary>
+    public int? LinkedStudentCapacity { get; set; }
 }

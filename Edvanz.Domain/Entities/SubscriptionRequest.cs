@@ -38,7 +38,19 @@ public class SubscriptionRequest : BaseEntity
     public int RequestedStudents { get; set; }
 
     /// <summary>
-    /// Fee computed server-side at submission time (Full = RequestedStudents × per-student rate;
+    /// Number of student APP ACCOUNTS to cover — the PRICED number
+    /// (<c>Teacher.LinkedStudentCapacity</c>). Only meaningful for
+    /// <see cref="SubscriptionPlanType.Full"/>; stored as 0 for the managerial plans.
+    ///
+    /// 0 also means "an older client submitted this row before the field existed" — those rows
+    /// fall back to <see cref="RequestedStudents"/> everywhere (pricing at submit time and the
+    /// capacity granted on approve), so old app builds keep their exact previous behaviour.
+    /// Never exceeds <see cref="RequestedStudents"/> (app accounts need student records).
+    /// </summary>
+    public int RequestedLinkedStudents { get; set; }
+
+    /// <summary>
+    /// Fee computed server-side at submission time (Full = RequestedLinkedStudents × per-student rate;
     /// Managerial = flat managerial monthly price). A snapshot for the admin's context and the
     /// teacher's record; the client-supplied amount (if any) is never trusted.
     /// </summary>

@@ -40,6 +40,21 @@ public class Teacher : BaseEntity
     public int StudentCapacity { get; set; } = 500;
 
     /// <summary>
+    /// Maximum number of student APP ACCOUNTS that may be LINKED (bound) to this teacher —
+    /// a seat is consumed only by a StudentTeacherLink that is Active AND bound to a
+    /// TeacherStudent record. Distinct from <see cref="StudentCapacity"/> (how many student
+    /// records may exist in the account, a free operational quota).
+    ///
+    /// This is the PRICED limit: the renewal fee is LinkedStudentCapacity × the per-student
+    /// rate. INVARIANT: LinkedStudentCapacity &lt;= StudentCapacity — a linked account always
+    /// needs a student record behind it, so a higher linked limit would be unreachable; every
+    /// write path that raises this value raises <see cref="StudentCapacity"/> to match rather
+    /// than failing. Defaults to 500, and existing rows were backfilled from
+    /// <see cref="StudentCapacity"/> so nobody's bill changed on the deploy that added it.
+    /// </summary>
+    public int LinkedStudentCapacity { get; set; } = 500;
+
+    /// <summary>
     /// Teacher's preferred UI language. "en" or "ar".
     /// AAM-FR-02.1/02.3: Selected during registration, changeable from settings.
     /// </summary>

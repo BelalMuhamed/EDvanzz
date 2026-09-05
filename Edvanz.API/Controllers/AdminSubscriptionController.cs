@@ -51,6 +51,43 @@ public class AdminSubscriptionController : ApiBaseController
         var result = await _adminService.SetTeacherCapacityAsync(adminUserId.Value, teacherId, request);
         return ToResponse(result);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT: SET TEACHER STUDENT-APP-ACCOUNT LIMIT
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   Sets Teacher.LinkedStudentCapacity — how many student APP ACCOUNTS may be
+    //   linked at once. This is the PRICED limit (limit × per-student rate); the
+    //   students-in-the-account limit above is a free operational quota.
+    //
+    //   Unlike the capacity endpoint above this allows BOTH increase and decrease —
+    //   tuning the paid limit down is the point. A decrease never unlinks anyone; it
+    //   only blocks NEW links until usage falls back under the limit. Raising it past
+    //   StudentCapacity raises that limit to match.
+    //
+    // TABLES WRITTEN: Teachers (LinkedStudentCapacity, possibly StudentCapacity),
+    //                 CapacityIncreaseRequests (Approved audit row, kind LinkedStudents)
+    //
+    // SAMPLE: PUT /api/admin/subscriptions/teachers/42/linked-capacity
+    //   { "newCapacity": 300, "note": "moved to the 300-account package" }
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpPut("teachers/{teacherId:long}/linked-capacity")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.Subscription.CapacityRequestDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SetTeacherLinkedCapacity(
+        [FromRoute] long teacherId,
+        [FromBody] Edvanz.Application.Dtos.Subscription.AdminSetLinkedCapacityRequest request)
+    {
+        long? adminUserId = _currentUser.UserId;
+        if (adminUserId is null) return AdminNotResolved();
+
+        var result = await _adminService.SetTeacherLinkedCapacityAsync(adminUserId.Value, teacherId, request);
+        return ToResponse(result);
+    }
     // ══════════════════════════════════════════════════════════════════════════
     // ENDPOINT: CANCEL (REQ-ADM-013)
     // ══════════════════════════════════════════════════════════════════════════

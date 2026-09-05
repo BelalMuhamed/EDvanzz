@@ -1030,13 +1030,14 @@ public class EdvanzDbContext(DbContextOptions<EdvanzDbContext> options) : DbCont
                 .OnDelete(DeleteBehavior.SetNull);
 
             // ── Indexes ──
-            // One LIVE Pending request per teacher; terminal rows accumulate for audit.
-            // Keep the [Status] literal in sync with CapacityRequestStatus.Pending = 1
-            // (StudentTeacherLink filtered-index precedent).
-            entity.HasIndex(r => r.TeacherId)
+            // One LIVE Pending request per teacher PER KIND (account students vs. linked
+            // student app accounts are separate limits that queue independently); terminal
+            // rows accumulate for audit. Keep the [Status] literal in sync with
+            // CapacityRequestStatus.Pending = 1 (StudentTeacherLink filtered-index precedent).
+            entity.HasIndex(r => new { r.TeacherId, r.CapacityKind })
                 .IsUnique()
                 .HasFilter("[Status] = 1")
-                .HasDatabaseName("UX_CapacityIncreaseRequests_Teacher_Pending");
+                .HasDatabaseName("UX_CapacityIncreaseRequests_Teacher_Kind_Pending");
 
             // Admin FIFO queue listing (Status = Pending, RequestedAt ASC).
             entity.HasIndex(r => new { r.Status, r.RequestedAt })

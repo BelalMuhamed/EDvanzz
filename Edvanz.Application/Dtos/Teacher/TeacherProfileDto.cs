@@ -13,6 +13,23 @@ public class TeacherProfileDto
     public string? Email { get; set; }
     public string? PhoneNumber { get; set; }
     public int StudentCapacity { get; set; }
+
+    /// <summary>
+    /// How many student APP ACCOUNTS may be linked to this teacher at once
+    /// (<c>Teacher.LinkedStudentCapacity</c>) — the limit the subscription price is based on.
+    /// Distinct from <see cref="StudentCapacity"/>, which caps how many student records may
+    /// exist in the account. Always &lt;= <see cref="StudentCapacity"/>.
+    /// </summary>
+    public int LinkedStudentCapacity { get; set; }
+
+    /// <summary>
+    /// Consumed student-app-account SEATS: links that are Active AND bound to a student record.
+    /// This is the number measured against <see cref="LinkedStudentCapacity"/> — an
+    /// accepted-but-unbound connection sees no data and costs nothing. Identical meaning to
+    /// <c>features.linkedStudentsUsed</c> on GET /api/subscription/status.
+    /// </summary>
+    public int LinkedStudentsUsed { get; set; }
+
     public string? LanguagePreference { get; set; }
     public string? CustomSubject { get; set; }
     public string AccountStatus { get; set; } = null!;

@@ -26,10 +26,23 @@ public class CapacityIncreaseRequest : BaseEntity
 
     public Teacher Teacher { get; set; } = null!;
 
-    /// <summary>Snapshot of Teacher.StudentCapacity at submission time (audit context for the reviewer).</summary>
+    /// <summary>
+    /// WHICH limit this request targets: <see cref="Enums.CapacityKind.AccountStudents"/>
+    /// (Teacher.StudentCapacity — student records in the account) or
+    /// <see cref="Enums.CapacityKind.LinkedStudents"/> (Teacher.LinkedStudentCapacity — the
+    /// priced student-app-account limit). NOT NULL, defaults to AccountStudents so every row
+    /// written before this column existed keeps its original meaning.
+    /// One live Pending request is allowed PER KIND per teacher (filtered unique index).
+    /// </summary>
+    public CapacityKind CapacityKind { get; set; } = CapacityKind.AccountStudents;
+
+    /// <summary>
+    /// Snapshot of the targeted limit at submission time (audit context for the reviewer) —
+    /// Teacher.StudentCapacity for AccountStudents, Teacher.LinkedStudentCapacity for LinkedStudents.
+    /// </summary>
     public int CapacityAtRequest { get; set; }
 
-    /// <summary>The capacity the teacher is asking for. Must exceed CapacityAtRequest and stay within SubscriptionConstants.MaxStudentCapacity.</summary>
+    /// <summary>The capacity the teacher is asking for on the targeted limit. Must exceed CapacityAtRequest and stay within SubscriptionConstants.MaxStudentCapacity.</summary>
     public int RequestedCapacity { get; set; }
 
     /// <summary>Optional free-text justification from the teacher (max 500, Fluent).</summary>

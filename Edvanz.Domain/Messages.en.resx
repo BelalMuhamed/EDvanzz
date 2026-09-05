@@ -2116,7 +2116,7 @@
     <value>Add Student</value>
   </data>
   <data name="PermissionDescription_Student_Add" xml:space="preserve">
-    <value>Allows adding a new student to the roster.</value>
+    <value>Allows adding a new student.</value>
   </data>
   <data name="Permission_Student_Edit" xml:space="preserve">
     <value>Edit Student</value>
@@ -2128,7 +2128,7 @@
     <value>Delete Student</value>
   </data>
   <data name="PermissionDescription_Student_Delete" xml:space="preserve">
-    <value>Allows removing a student from the roster.</value>
+    <value>Allows removing a student.</value>
   </data>
   <data name="Permission_Student_Import" xml:space="preserve">
     <value>Import Students</value>
@@ -2675,5 +2675,29 @@
   </data>
   <data name="BillingStartDateInvalid" xml:space="preserve">
     <value>This billing start month is not accepted. Pick a month close to today.</value>
+  </data>
+  <data name="LinkedStudentCapacityReached" xml:space="preserve">
+    <value>You've reached your limit of {0} student app accounts. Remove a linked student or upgrade your subscription to link more.</value>
+  </data>
+  <data name="LinkedStudentCapacityReachedCenterManaged" xml:space="preserve">
+    <value>You've reached your limit of {0} student app accounts. Your center sets this limit, so ask them to raise it, or unlink a student who no longer needs the app.</value>
+  </data>
+  <data name="LinkedStudentCapacityUpdated" xml:space="preserve">
+    <value>The student app accounts limit has been updated.</value>
+  </data>
+  <data name="RequestedLinkedStudentsRequired" xml:space="preserve">
+    <value>Please enter how many student app accounts you need.</value>
+  </data>
+  <data name="RequestedLinkedStudentsTooLarge" xml:space="preserve">
+    <value>The number of student app accounts is too large.</value>
+  </data>
+  <data name="RequestedLinkedStudentsExceedsAccountStudents" xml:space="preserve">
+    <value>Student app accounts can't be more than the students in your account. Raise the number of students in your account, or ask for fewer app accounts.</value>
+  </data>
+  <data name="LinkedCapacityIncreaseOnly" xml:space="preserve">
+    <value>The new number of student app accounts must be greater than your current one. To lower it, contact support.</value>
+  </data>
+  <data name="LinkedStudentCapacityExceedsStudentCapacity" xml:space="preserve">
+    <value>The student app accounts limit can't be higher than the number of students in the account. Lower it, or raise the students limit.</value>
   </data>
 </root>

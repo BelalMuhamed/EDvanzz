@@ -19,11 +19,27 @@ public class TeacherListItemDto
     public string? PhoneNumber { get; set; }
     public int StudentCapacity { get; set; }
 
+    /// <summary>
+    /// How many student APP ACCOUNTS this teacher may have linked at once
+    /// (<c>Teacher.LinkedStudentCapacity</c>) — the PRICED limit. Compare with
+    /// <see cref="LinkedStudentCount"/> for the usage picture. Always &lt;= <see cref="StudentCapacity"/>.
+    /// </summary>
+    public int LinkedStudentCapacity { get; set; }
+
     /// <summary>Number of students CREATED (active roster) under this teacher.</summary>
     public int StudentCount { get; set; }
 
     /// <summary>Number of students who have an ACTIVE account link (connected) to this teacher.</summary>
     public int LinkedStudentCount { get; set; }
+
+    /// <summary>
+    /// Consumed student-app-account SEATS: links that are Active AND bound to a student record.
+    /// This — not <see cref="LinkedStudentCount"/> — is the number measured against
+    /// <see cref="LinkedStudentCapacity"/>, because an accepted-but-unbound connection sees no
+    /// data and costs nothing. Identical meaning to <c>features.linkedStudentsUsed</c> on
+    /// GET /api/subscription/status. Always &lt;= <see cref="LinkedStudentCount"/>.
+    /// </summary>
+    public int LinkedStudentsUsed { get; set; }
 
     /// <summary>
     /// Number of sessions (classes) owned by this teacher. Sessions are hard-deleted, so

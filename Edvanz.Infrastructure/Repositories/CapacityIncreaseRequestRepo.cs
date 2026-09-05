@@ -35,10 +35,11 @@ public class CapacityIncreaseRequestRepo
     }
 
     /// <inheritdoc />
-    public async Task<bool> HasPendingRequestAsync(long teacherId)
+    public async Task<bool> HasPendingRequestAsync(long teacherId, CapacityKind capacityKind)
     {
         return await _context.Set<CapacityIncreaseRequest>()
             .AnyAsync(r => r.TeacherId == teacherId
+                        && r.CapacityKind == capacityKind
                         && r.Status == CapacityRequestStatus.Pending);
     }
 

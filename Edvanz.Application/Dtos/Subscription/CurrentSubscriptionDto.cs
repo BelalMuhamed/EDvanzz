@@ -47,4 +47,11 @@ public class CurrentSubscriptionDto
     /// Zero when the teacher has no package assigned yet.
     /// </summary>
     public decimal RenewalAmountEGP { get; set; }
+
+    /// <summary>
+    /// The teacher's student-APP-ACCOUNT limit (<c>Teacher.LinkedStudentCapacity</c>) — the
+    /// number <see cref="RenewalAmountEGP"/> is computed from on the Full plan. Additive; 0
+    /// when the teacher row cannot be read. Not meaningful for the flat managerial plans.
+    /// </summary>
+    public int LinkedStudentCapacity { get; set; }
 }

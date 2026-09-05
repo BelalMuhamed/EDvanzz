@@ -23,6 +23,18 @@ public class CreateSubscriptionRequestRequest
     /// </summary>
     public int RequestedStudents { get; set; }
 
+    /// <summary>
+    /// Number of student APP ACCOUNTS to cover — the PRICED number (it becomes
+    /// <c>Teacher.LinkedStudentCapacity</c> on approve). Must be &gt; 0 and never greater than
+    /// <see cref="RequestedStudents"/> for <see cref="SubscriptionPlanType.Full"/>; ignored for
+    /// the flat-priced managerial plans.
+    ///
+    /// NULLABLE ON PURPOSE: an app build that predates this field sends only
+    /// <see cref="RequestedStudents"/>, and null falls back to it — such a request is priced
+    /// and granted exactly as it was before this field existed.
+    /// </summary>
+    public int? RequestedLinkedStudents { get; set; }
+
     /// <summary>Optional free-text note shown to the reviewing admin (max 500 chars).</summary>
     public string? Note { get; set; }
 }

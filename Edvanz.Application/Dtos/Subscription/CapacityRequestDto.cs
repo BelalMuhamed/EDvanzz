@@ -12,10 +12,17 @@ public class CapacityRequestDto
     /// <summary>The CapacityIncreaseRequest row id.</summary>
     public long Id { get; set; }
 
-    /// <summary>The capacity the teacher asked for.</summary>
+    /// <summary>
+    /// Which limit the request targets: AccountStudents (students in the account) or
+    /// LinkedStudents (student app accounts — the priced limit). Serialized as a string.
+    /// Additive: absent on older servers, where every request meant AccountStudents.
+    /// </summary>
+    public CapacityKind CapacityKind { get; set; } = CapacityKind.AccountStudents;
+
+    /// <summary>The capacity the teacher asked for on the targeted limit.</summary>
     public int RequestedCapacity { get; set; }
 
-    /// <summary>The teacher's StudentCapacity at submission time.</summary>
+    /// <summary>The teacher's value of the targeted limit at submission time.</summary>
     public int CapacityAtRequest { get; set; }
 
     /// <summary>Pending, Approved, Rejected, or Cancelled.</summary>

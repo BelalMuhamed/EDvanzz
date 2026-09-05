@@ -187,6 +187,8 @@ public partial class DbInitializer
             UserId                   = user.Id,
             TeacherCode              = teacherCode,
             StudentCapacity          = studentCapacity,
+            // Seeded teachers start with both limits equal (see Teacher.LinkedStudentCapacity).
+            LinkedStudentCapacity    = studentCapacity,
             LanguagePreference       = EnglishLanguage,
             AccountStatus            = AccountStatus.Active,
             IsConfigurationCompleted = true,

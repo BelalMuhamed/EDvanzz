@@ -189,12 +189,31 @@ public interface IAdminSubscriptionService
         long adminUserId, AdminCancelRequest request);
 
     /// <summary>
-    /// Admin-initiated, increase-only capacity raise for a teacher WITHOUT a prior request.
-    /// Same core as ApproveCapacityRequestAsync: raises Teacher.StudentCapacity (Math.Max),
-    /// writes an Approved CapacityIncreaseRequest audit row (RequestedByUserId =
-    /// ResolvedByUserId = admin), notifies the teacher post-commit. New price from the next
-    /// renewal (BR-SUB-009). 400 when newCapacity is out of range or not greater than current.
+    /// Admin-initiated, increase-only raise of the students-in-the-account limit for a teacher
+    /// WITHOUT a prior request. Same core as ApproveCapacityRequestAsync: raises
+    /// Teacher.StudentCapacity (Math.Max), writes an Approved CapacityIncreaseRequest audit row
+    /// (CapacityKind = AccountStudents, RequestedByUserId = ResolvedByUserId = admin), notifies
+    /// the teacher post-commit. This limit is FREE — the price follows LinkedStudentCapacity
+    /// (see <see cref="SetTeacherLinkedCapacityAsync"/>). 400 when newCapacity is out of range or
+    /// not greater than current.
     /// </summary>
     Task<Result<CapacityRequestDto>> SetTeacherCapacityAsync(
         long adminUserId, long teacherId, AdminSetCapacityRequest request);
+
+    /// <summary>
+    /// Admin-initiated set of the teacher's STUDENT APP ACCOUNT limit
+    /// (Teacher.LinkedStudentCapacity) — the limit the subscription price is computed from.
+    ///
+    /// Unlike <see cref="SetTeacherCapacityAsync"/> this accepts BOTH increases and decreases:
+    /// tuning the paid limit down is the normal way to move a teacher to a smaller package.
+    /// A decrease never breaks already-linked students — it only stops NEW links until usage
+    /// falls back under the limit. When the new value exceeds Teacher.StudentCapacity that limit
+    /// is raised to match (a linked account needs a student record; the students-in-the-account
+    /// quota is free). Writes an Approved CapacityIncreaseRequest audit row (CapacityKind =
+    /// LinkedStudents, RequestedByUserId = ResolvedByUserId = admin) in the same transaction and
+    /// notifies the teacher post-commit ON A RAISE ONLY. New price from the next renewal
+    /// (BR-SUB-009). 400 when newCapacity is out of range, 404 when the teacher does not exist.
+    /// </summary>
+    Task<Result<CapacityRequestDto>> SetTeacherLinkedCapacityAsync(
+        long adminUserId, long teacherId, AdminSetLinkedCapacityRequest request);
 }

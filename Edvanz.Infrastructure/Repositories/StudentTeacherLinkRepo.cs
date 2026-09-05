@@ -57,6 +57,36 @@ namespace Edvanz.Infrastructure.Repositories
                 .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
         }
 
+        /// <inheritdoc />
+        public async Task<int> CountBoundLinksAsync(long teacherId)
+        {
+            // BOUND links only — an Active-but-unbound connection ("accepted, Not linked")
+            // sees no data and therefore consumes no paid seat.
+            return await _context.StudentTeacherLinks
+                .AsNoTracking()
+                .CountAsync(l => l.TeacherId == teacherId &&
+                                 l.LinkStatus == Domain.Enums.LinkStatus.Active &&
+                                 l.TeacherStudentId != null);
+        }
+
+        /// <inheritdoc />
+        public async Task<Dictionary<long, int>> GetBoundLinkedCountsAsync(
+            IReadOnlyCollection<long> teacherIds)
+        {
+            if (teacherIds.Count == 0) return new Dictionary<long, int>();
+
+            // ONE GROUP BY for the whole page — same shape as GetActiveLinkedCountsAsync, with the
+            // extra TeacherStudentId filter that makes it a SEAT count rather than a connection count.
+            return await _context.StudentTeacherLinks
+                .AsNoTracking()
+                .Where(l => teacherIds.Contains(l.TeacherId) &&
+                            l.LinkStatus == Domain.Enums.LinkStatus.Active &&
+                            l.TeacherStudentId != null)
+                .GroupBy(l => l.TeacherId)
+                .Select(g => new { TeacherId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.TeacherId, x => x.Count);
+        }
+
 
     }
 }

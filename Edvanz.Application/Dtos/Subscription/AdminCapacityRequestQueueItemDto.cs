@@ -1,3 +1,5 @@
+using Edvanz.Domain.Enums;
+
 namespace Edvanz.Application.Dtos.Subscription;
 
 /// <summary>
@@ -16,19 +18,31 @@ public class AdminCapacityRequestQueueItemDto
 
     public string TeacherCode { get; set; } = string.Empty;
 
-    /// <summary>The teacher's LIVE StudentCapacity (may differ from CapacityAtRequest if an admin changed it since).</summary>
+    /// <summary>
+    /// Which limit this request targets: AccountStudents (students in the account, a free
+    /// operational quota) or LinkedStudents (student app accounts — the PRICED limit).
+    /// Every field below is expressed in terms of THIS limit. Serialized as a string.
+    /// </summary>
+    public CapacityKind CapacityKind { get; set; } = CapacityKind.AccountStudents;
+
+    /// <summary>The teacher's LIVE value of the targeted limit (may differ from CapacityAtRequest if an admin changed it since).</summary>
     public int CurrentCapacity { get; set; }
 
-    /// <summary>The teacher's StudentCapacity snapshotted at submission time.</summary>
+    /// <summary>The teacher's value of the targeted limit, snapshotted at submission time.</summary>
     public int CapacityAtRequest { get; set; }
 
-    /// <summary>The capacity the teacher is asking for.</summary>
+    /// <summary>The capacity the teacher is asking for on the targeted limit.</summary>
     public int RequestedCapacity { get; set; }
 
     /// <summary>Live count of the teacher's active roster students (usage vs. limit context).</summary>
     public int ActiveStudentCount { get; set; }
 
-    /// <summary>What the teacher would pay per renewal if approved: RequestedCapacity × per-student rate (0 when the rate is unconfigured).</summary>
+    /// <summary>
+    /// What the teacher would pay per renewal if approved. Only the student-app-account limit is
+    /// priced, so this is RequestedCapacity × per-student rate for a LinkedStudents request and
+    /// the teacher's LIVE LinkedStudentCapacity × rate for an AccountStudents one (raising the
+    /// students-in-the-account quota is free). 0 when the rate is unconfigured.
+    /// </summary>
     public decimal ProjectedMonthlyPriceEGP { get; set; }
 
     /// <summary>The teacher's optional justification.</summary>

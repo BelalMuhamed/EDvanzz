@@ -6,6 +6,7 @@ using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Enums;
+using Edvanz.Domain.Helpers;
 using Edvanz.Domain.Interfaces;
 using Edvanz.Domain.Resources;
 using Hangfire;
@@ -439,17 +440,34 @@ public class AdminSubscriptionService : IAdminSubscriptionService
             var teacherInfo = await _unitOfWork.Users.GetTeacherForReminderAsync(request.TeacherId);
             int activeStudents = await _unitOfWork.Students.CountActiveStudentsAsync(request.TeacherId);
 
+            bool isLinkedKind = request.CapacityKind == CapacityKind.LinkedStudents;
+
+            // Every capacity figure on the row is expressed in terms of the limit the request
+            // targets — reading a linked-accounts request against the students-in-the-account
+            // number would show the admin a nonsense "current".
+            int liveCapacity = teacher is null
+                ? request.CapacityAtRequest
+                : (isLinkedKind ? teacher.LinkedStudentCapacity : teacher.StudentCapacity);
+
+            // Only student APP ACCOUNTS are priced. Raising the students-in-the-account quota is
+            // free, so such a request projects the teacher's CURRENT linked limit × rate — i.e.
+            // "approving this changes nothing about the bill".
+            int pricedCapacity = isLinkedKind
+                ? request.RequestedCapacity
+                : (teacher?.LinkedStudentCapacity ?? 0);
+
             dtoList.Add(new AdminCapacityRequestQueueItemDto
             {
                 Id = request.Id,
                 TeacherId = request.TeacherId,
                 TeacherName = teacherInfo?.FullName ?? string.Empty,
                 TeacherCode = teacher?.TeacherCode ?? string.Empty,
-                CurrentCapacity = teacher?.StudentCapacity ?? request.CapacityAtRequest,
+                CapacityKind = request.CapacityKind,
+                CurrentCapacity = liveCapacity,
                 CapacityAtRequest = request.CapacityAtRequest,
                 RequestedCapacity = request.RequestedCapacity,
                 ActiveStudentCount = activeStudents,
-                ProjectedMonthlyPriceEGP = rate <= 0m ? 0m : request.RequestedCapacity * rate,
+                ProjectedMonthlyPriceEGP = rate <= 0m ? 0m : pricedCapacity * rate,
                 Note = request.Note,
                 RequestedAt = request.RequestedAt
             });
@@ -560,6 +578,12 @@ public class AdminSubscriptionService : IAdminSubscriptionService
             if (request.PlanType == SubscriptionPlanType.Full && request.RequestedStudents > 0)
             {
                 teacher.StudentCapacity = request.RequestedStudents;
+                // Rows written by app builds that predate the student-app-account limit carry 0 —
+                // fall back to the students number so they are granted exactly as before.
+                teacher.LinkedStudentCapacity = request.RequestedLinkedStudents > 0
+                    ? request.RequestedLinkedStudents
+                    : request.RequestedStudents;
+                EnforceCapacityInvariant(teacher);
                 await _unitOfWork.Users.UpdateTeacherAsync(teacher);
             }
 
@@ -657,9 +681,7 @@ public class AdminSubscriptionService : IAdminSubscriptionService
                 _localizer, SubscriptionConstants.Messages.TeacherNotFound, HttpStatusCode.NotFound);
         }
 
-        // ── Capacity raise + status flip in ONE transaction ──
-        // Math.Max: never lower capacity, even if an admin already raised it past the
-        // requested value while this request sat in the queue.
+        // ── Capacity raise (on the limit the request targets) + status flip in ONE transaction ──
         await _unitOfWork.BeginTransactionAsync();
         try
         {
@@ -673,11 +695,33 @@ public class AdminSubscriptionService : IAdminSubscriptionService
             ToCapacityRequestDto(request), _localizer, SubscriptionConstants.Messages.CapacityRequestApproved);
     }
 
-    /// <summary>Increase-only capacity raise + Approved audit stamp, inside the caller's transaction.</summary>
+    /// <summary>
+    /// Thin alias for <see cref="TeacherCapacityRules.EnforceInvariant"/> — the ONE implementation
+    /// of <c>LinkedStudentCapacity &lt;= StudentCapacity</c>, shared with the teacher-creation path
+    /// (TeacherService) so the rule cannot drift between the two.
+    /// </summary>
+    private static void EnforceCapacityInvariant(Teacher teacher) =>
+        TeacherCapacityRules.EnforceInvariant(teacher);
+
+    /// <summary>
+    /// Increase-only capacity raise on the limit the request TARGETS + Approved audit stamp,
+    /// inside the caller's transaction. Math.Max: never lower a limit, even if an admin already
+    /// raised it past the requested value while the request sat in the queue.
+    /// </summary>
     private async Task ApplyApprovedCapacityAsync(
         Teacher teacher, CapacityIncreaseRequest request, long adminUserId, bool isNewRow)
     {
-        teacher.StudentCapacity = Math.Max(teacher.StudentCapacity, request.RequestedCapacity);
+        if (request.CapacityKind == CapacityKind.LinkedStudents)
+        {
+            teacher.LinkedStudentCapacity =
+                Math.Max(teacher.LinkedStudentCapacity, request.RequestedCapacity);
+            EnforceCapacityInvariant(teacher);
+        }
+        else
+        {
+            teacher.StudentCapacity = Math.Max(teacher.StudentCapacity, request.RequestedCapacity);
+        }
+
         await _unitOfWork.Users.UpdateTeacherAsync(teacher);
 
         request.Status = CapacityRequestStatus.Approved;
@@ -718,6 +762,7 @@ public class AdminSubscriptionService : IAdminSubscriptionService
         var row = new CapacityIncreaseRequest
         {
             TeacherId = teacherId,
+            CapacityKind = CapacityKind.AccountStudents,
             CapacityAtRequest = teacher.StudentCapacity,
             RequestedCapacity = request.NewCapacity,
             Note = note,
@@ -737,6 +782,67 @@ public class AdminSubscriptionService : IAdminSubscriptionService
         EnqueueCapacityApprovedNotification(row.TeacherId, row.Id);
         return Result<CapacityRequestDto>.Success(
             ToCapacityRequestDto(row), _localizer, SubscriptionConstants.Messages.CapacityRequestApproved);
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<CapacityRequestDto>> SetTeacherLinkedCapacityAsync(
+        long adminUserId, long teacherId, AdminSetLinkedCapacityRequest request)
+    {
+        if (request.NewCapacity <= 0 || request.NewCapacity > SubscriptionConstants.MaxStudentCapacity)
+            return Result<CapacityRequestDto>.Failure(
+                _localizer, SubscriptionConstants.Messages.RequestedLinkedStudentsTooLarge);
+
+        var teacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(teacherId);
+        if (teacher is null)
+            return Result<CapacityRequestDto>.Failure(
+                _localizer, SubscriptionConstants.Messages.TeacherNotFound, HttpStatusCode.NotFound);
+
+        string? note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+        if (note is { Length: > 500 }) note = note[..500];
+
+        // Audit row mirroring SetTeacherCapacityAsync: an Approved CapacityIncreaseRequest with
+        // the admin as both requester and resolver, so the history reads the same for both limits.
+        var row = new CapacityIncreaseRequest
+        {
+            TeacherId = teacherId,
+            CapacityKind = CapacityKind.LinkedStudents,
+            CapacityAtRequest = teacher.LinkedStudentCapacity,
+            RequestedCapacity = request.NewCapacity,
+            Note = note,
+            Status = CapacityRequestStatus.Approved,
+            RequestedAt = DateTime.UtcNow,
+            RequestedByUserId = adminUserId,   // admin acted on the teacher's behalf
+            ResolvedAt = DateTime.UtcNow,
+            ResolvedByUserId = adminUserId,
+            CreateAt = DateTime.UtcNow,
+        };
+
+        await _unitOfWork.BeginTransactionAsync();
+        try
+        {
+            // DIRECT assignment, not Math.Max — unlike the students-in-the-account endpoint this
+            // one is deliberately two-way: tuning the paid limit DOWN (e.g. moving a teacher to a
+            // smaller package) is the main reason it exists. Lowering never touches links that are
+            // already bound; it only stops new ones until usage falls back under the limit.
+            teacher.LinkedStudentCapacity = request.NewCapacity;
+            EnforceCapacityInvariant(teacher);
+            await _unitOfWork.Users.UpdateTeacherAsync(teacher);
+
+            await _unitOfWork.CapacityRequestsRepo.AddAsync(row);
+            await _unitOfWork.SaveChangesAsync();
+            await _unitOfWork.CommitAsync();
+        }
+        catch { await _unitOfWork.RollbackAsync(); throw; }
+
+        // The teacher is told about a RAISE only — a decrease is an internal/commercial change
+        // the admin communicates out of band, and a push saying "your limit went down" on a plan
+        // the teacher did not just change would be alarming.
+        if (row.RequestedCapacity > row.CapacityAtRequest)
+            EnqueueCapacityApprovedNotification(row.TeacherId, row.Id);
+
+        return Result<CapacityRequestDto>.Success(
+            ToCapacityRequestDto(row), _localizer,
+            SubscriptionConstants.Messages.LinkedStudentCapacityUpdated);
     }
 
     /// <inheritdoc />
@@ -978,6 +1084,7 @@ public class AdminSubscriptionService : IAdminSubscriptionService
     private static CapacityRequestDto ToCapacityRequestDto(CapacityIncreaseRequest row) => new()
     {
         Id = row.Id,
+        CapacityKind = row.CapacityKind,
         RequestedCapacity = row.RequestedCapacity,
         CapacityAtRequest = row.CapacityAtRequest,
         Status = row.Status,

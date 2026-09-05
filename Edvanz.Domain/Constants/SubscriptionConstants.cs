@@ -177,6 +177,8 @@ public static class SubscriptionConstants
         public const string CapacityRequestRejected = "CapacityRequestRejected";
         public const string RequestedCapacityMustExceedCurrent = "RequestedCapacityMustExceedCurrent";
         public const string RequestedCapacityTooLarge = "RequestedCapacityTooLarge";
+        /// <summary>Increase-only guard for a LinkedStudents-kind capacity request (student app accounts).</summary>
+        public const string LinkedCapacityIncreaseOnly = "LinkedCapacityIncreaseOnly";
         public const string CapacityRequestApprovedTitle = "CapacityRequestApprovedTitle";
         public const string CapacityRequestApprovedBody = "CapacityRequestApprovedBody";
         public const string CapacityRequestRejectedTitle = "CapacityRequestRejectedTitle";
@@ -192,6 +194,23 @@ public static class SubscriptionConstants
         public const string SubscriptionRequestRejected = "SubscriptionRequestRejected";
         public const string RequestedStudentsRequired = "RequestedStudentsRequired";
         public const string RequestedStudentsTooLarge = "RequestedStudentsTooLarge";
+
+        // ── Student app accounts (Teacher.LinkedStudentCapacity — the PRICED limit) ──
+        /// <summary>Bind/accept-and-link refused: every paid student-app-account seat is taken. Formatted with the limit.</summary>
+        public const string LinkedStudentCapacityReached = "LinkedStudentCapacityReached";
+        /// <summary>
+        /// Same refusal, for a CENTER-MANAGED teacher (<see cref="Entities.Teacher.CenterId"/> set).
+        /// They have no subscription of their own to upgrade — the center owns the limit — and the
+        /// center's screens expose a single "student capacity" field, so the generic wording would
+        /// point them at a plan they cannot buy. Formatted with the limit.
+        /// </summary>
+        public const string LinkedStudentCapacityReachedCenterManaged = "LinkedStudentCapacityReachedCenterManaged";
+        /// <summary>Admin set the teacher's student-app-account limit (up or down).</summary>
+        public const string LinkedStudentCapacityUpdated = "LinkedStudentCapacityUpdated";
+        public const string RequestedLinkedStudentsRequired = "RequestedLinkedStudentsRequired";
+        public const string RequestedLinkedStudentsTooLarge = "RequestedLinkedStudentsTooLarge";
+        /// <summary>App accounts cannot exceed the number of students in the account.</summary>
+        public const string RequestedLinkedStudentsExceedsAccountStudents = "RequestedLinkedStudentsExceedsAccountStudents";
         // Teacher-facing notifications on resolution.
         public const string SubscriptionRequestApprovedTitle = "SubscriptionRequestApprovedTitle";
         public const string SubscriptionRequestApprovedBody = "SubscriptionRequestApprovedBody";

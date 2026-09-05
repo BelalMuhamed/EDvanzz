@@ -68,4 +68,18 @@ public class SubscriptionFeaturesDto
 
     /// <summary>May the public parent follow-up page be used? False under plain Managerial only.</summary>
     public bool ParentFollowUpAllowed { get; set; } = true;
+
+    /// <summary>
+    /// How many student APP ACCOUNTS this teacher may have linked at once
+    /// (<c>Teacher.LinkedStudentCapacity</c>) — the limit the subscription price is based on.
+    /// Distinct from the students-in-the-account quota. Additive: 0 on older servers.
+    /// </summary>
+    public int LinkedStudentCapacity { get; set; }
+
+    /// <summary>
+    /// Live count of seats in use: links that are Active AND bound to a student record.
+    /// An accepted-but-unbound connection uses no seat. Compare with
+    /// <see cref="LinkedStudentCapacity"/> to render "X of Y app accounts used".
+    /// </summary>
+    public int LinkedStudentsUsed { get; set; }
 }

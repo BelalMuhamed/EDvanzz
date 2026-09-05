@@ -158,6 +158,13 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
             bool alreadyClaimed = await _unitOfWork.Users.IsTeacherStudentActivelyLinkedAsync(rosterStudent.Id);
             if (alreadyClaimed)
                 return Result<LinkedStudentListItemDto>.Failure(_localizer, "RosterStudentAlreadyClaimed", HttpStatusCode.Conflict);
+
+            // Paid seat check — ONLY on the "Accept & link" path, because only a BOUND link
+            // consumes a student-app-account seat. Accepting UNBOUND stays free, and per the
+            // Connection-vs-Link rule this must FAIL the accept rather than silently downgrade
+            // it to an unbound accept (the caller asked to link).
+            var seatFailure = await CheckLinkedStudentCapacityAsync(teacherId);
+            if (seatFailure is not null) return seatFailure;
         }
 
         var now = DateTime.UtcNow;
@@ -250,6 +257,16 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
         bool alreadyClaimed = await _unitOfWork.Users.IsTeacherStudentActivelyLinkedAsync(rosterStudent.Id);
         if (alreadyClaimed)
             return Result<LinkedStudentListItemDto>.Failure(_localizer, "RosterStudentAlreadyClaimed", HttpStatusCode.Conflict);
+
+        // Paid seat check — ONLY for a first bind (unbound -> bound), which is a net +1.
+        // RE-POINTING an already-bound link is net zero and must ALWAYS be allowed, even at
+        // (or over) the limit: blocking "Change linked student" would be a UX regression and
+        // would trap a teacher who is exactly at their limit.
+        if (link.TeacherStudentId is null)
+        {
+            var seatFailure = await CheckLinkedStudentCapacityAsync(teacherId);
+            if (seatFailure is not null) return seatFailure;
+        }
 
         link.TeacherStudentId = rosterStudent.Id;   // first bind, or re-point ("Change")
         link.RemovedByUserId = null;                // (re)bound → clear any stale removal marker
@@ -413,6 +430,12 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
         // Page-level flag: whether the teacher has the device lock on (drives the app's device UI).
         var config = await _unitOfWork.Users.GetConfigurationByTeacherIdAsync(teacherId);
 
+        // Seat usage is counted over ALL of the teacher's links, NOT off `linkedCount` above —
+        // that one is narrowed by the page's search term and would misreport what's left.
+        var capacityTeacher = await _unitOfWork.Users.GetTeacherByIdAsync(teacherId);
+        int linkedCapacity = capacityTeacher?.LinkedStudentCapacity ?? 0;
+        int seatsUsed = await _unitOfWork.studentTeacherLinkRepo.CountBoundLinksAsync(teacherId);
+
         var response = new LinkedStudentsPageResponse
         {
             data = items,
@@ -423,6 +446,9 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
             linkedCount = linkedCount,
             unlinkedCount = totalCount - linkedCount,
             deviceLockEnabled = config?.IsDeviceLockEnabled ?? false,
+            linkedStudentCapacity = linkedCapacity,
+            // Clamped: a limit lowered below current usage reads as "0 left", never negative.
+            linkedStudentsRemaining = Math.Max(0, linkedCapacity - seatsUsed),
         };
 
         return Result<LinkedStudentsPageResponse>.Success(response, _localizer);
@@ -508,6 +534,46 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
         if (pageSize < 1) pageSize = 20;
         if (pageSize > MaxPageSize) pageSize = MaxPageSize;
         return (page, pageSize);
+    }
+
+    /// <summary>
+    /// Seat guard for the student-APP-ACCOUNT limit (<c>Teacher.LinkedStudentCapacity</c> — the
+    /// limit the subscription price is based on, distinct from the students-in-the-account quota
+    /// enforced in TeacherStudentService). A seat is consumed ONLY by a link that is Active AND
+    /// bound to a student record, so this is called exactly on the two paths that create a new
+    /// binding: "Accept &amp; link" and a FIRST bind. Returns null when there is room, otherwise a
+    /// 403 failure naming the limit.
+    ///
+    /// Check-then-write with no lock — deliberately the same shape as the existing
+    /// StudentCapacity check in TeacherStudentService (a concurrent double-bind can overshoot by
+    /// one; lowering the limit never breaks existing linked students, it only stops new binds).
+    /// </summary>
+    private async Task<Result<LinkedStudentListItemDto>?> CheckLinkedStudentCapacityAsync(long teacherId)
+    {
+        var teacher = await _unitOfWork.Users.GetTeacherByIdAsync(teacherId);
+        if (teacher is null)
+            return Result<LinkedStudentListItemDto>.Failure(
+                _localizer, "TeacherNotFound", HttpStatusCode.NotFound);
+
+        int seatsUsed = await _unitOfWork.studentTeacherLinkRepo.CountBoundLinksAsync(teacherId);
+        if (seatsUsed >= teacher.LinkedStudentCapacity)
+        {
+            // A center-managed teacher cannot act on the generic advice ("upgrade your
+            // subscription") — the center owns their limit, and the center's own screens
+            // expose a single "student capacity" field, so they must be pointed at the
+            // center instead of at a plan they are not allowed to buy.
+            string messageKey = teacher.CenterId is null
+                ? SubscriptionConstants.Messages.LinkedStudentCapacityReached
+                : SubscriptionConstants.Messages.LinkedStudentCapacityReachedCenterManaged;
+
+            return Result<LinkedStudentListItemDto>.Failure(
+                _localizer,
+                messageKey,
+                new object?[] { teacher.LinkedStudentCapacity },
+                HttpStatusCode.Forbidden);
+        }
+
+        return null;
     }
 
     /// <summary>
