@@ -51,6 +51,14 @@ public class CollectPaymentDto
     /// </summary>
     public bool IsOfflineRecord { get; set; } = false;
     public string? OfflineDeviceId { get; set; }
+
+    /// <summary>
+    /// When the cash was actually taken on the device, as a UTC INSTANT — the app has always
+    /// sent <c>now.toUtc()</c> here (and the same for the <c>clientCreatedAt</c> fallback).
+    /// It is NOT the teacher's wall-clock: converting it is what
+    /// <c>PaymentTransaction.LocalCollectedAt</c> needs, and storing it raw put a UTC time on
+    /// the receipt.
+    /// </summary>
     public DateTime? OfflineCollectedAt { get; set; }
 
     /// <summary>

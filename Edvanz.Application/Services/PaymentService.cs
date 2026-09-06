@@ -391,8 +391,12 @@ public class PaymentService : IPaymentService
                 // displayed raw by the client). Use the teacher-local NOW — the old
                 // localDate.Add(now.TimeOfDay) grafted the UTC time-of-day onto the local date,
                 // storing a value ~2–3h behind the real collection time (Egypt offset).
+                // The offline branch had the SAME defect for longer: the app sends
+                // offlineCollectedAt as a UTC instant (now.toUtc()), and storing it raw put a UTC
+                // time on the receipt, so a collection taken at 22:06 Cairo read 19:06. Only the
+                // online branch was fixed the first time round; convert here too.
                 LocalCollectedAt = dto.IsOfflineRecord && dto.OfflineCollectedAt.HasValue
-                    ? dto.OfflineCollectedAt.Value
+                    ? _timeZoneService.ConvertUtcToLocal(dto.OfflineCollectedAt.Value)
                     : _timeZoneService.GetTeacherLocalNow(dto.TeacherId),
                 IsPartial = isPartial,
                 IsProRated = isProRated,
