@@ -75,6 +75,21 @@ public sealed class TeacherVideoUnitListRow
     public string Title { get; set; } = null!;
     public string? Description { get; set; }
     public int VideoCount { get; set; }
+
+    /// <summary>
+    /// Member videos that are LIVE to students right now — Published with no
+    /// PublishDate, or a PublishDate already reached. Same predicate the
+    /// student unit query uses, so the teacher's badge can never claim a unit
+    /// is live when students see nothing in it.
+    /// </summary>
+    public int PublishedVideoCount { get; set; }
+
+    /// <summary>
+    /// Member videos that are Published but still waiting on a future
+    /// PublishDate. A unit with only these reads "Scheduled" on the card.
+    /// </summary>
+    public int ScheduledVideoCount { get; set; }
+
     public int SeenStudentCount { get; set; }
     public int UnseenStudentCount { get; set; }
     public DateTime CreatedAt { get; set; }

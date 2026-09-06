@@ -174,7 +174,22 @@ public sealed class UpdateVideoRequest
     [Required]
     public string SourceUrl { get; set; } = null!;
 
+    /// <summary>
+    /// Scheduled-publish instant. <c>null</c> or omitted = <b>leave the stored
+    /// schedule untouched</b> — an edit that does not mention the date must never
+    /// silently drop it (renaming a video used to push it live early). To remove a
+    /// schedule, send <see cref="ClearPublishDate"/>; the quick toggle
+    /// <c>PATCH /api/videos/{id}/status</c> keeps its own "null = publish now" rule.
+    /// </summary>
     public DateTime? PublishDate { get; set; }
+
+    /// <summary>
+    /// <c>true</c> = remove any scheduled-publish date, making the video visible as
+    /// soon as it is Published. Defaults to false, so callers that never send it
+    /// (every shipped client) keep the stored date. Wins over
+    /// <see cref="PublishDate"/> if both are sent.
+    /// </summary>
+    public bool ClearPublishDate { get; set; }
 
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public VideoStatus? Status { get; set; }
@@ -459,6 +474,22 @@ public sealed class TeacherVideoUnitListItemDto
     public string Title { get; set; } = null!;
     public string? Description { get; set; }
     public int VideoCount { get; set; }
+
+    /// <summary>
+    /// Of <see cref="VideoCount"/>, how many are LIVE to students right now
+    /// (Published, and any PublishDate already reached). A unit carries no
+    /// publish state of its own — the client derives the card badge from this:
+    /// &gt; 0 = "Published".
+    /// </summary>
+    public int PublishedVideoCount { get; set; }
+
+    /// <summary>
+    /// Of <see cref="VideoCount"/>, how many are Published but still waiting on
+    /// a future PublishDate. With <see cref="PublishedVideoCount"/> at 0 and
+    /// this above 0 the card reads "Scheduled"; both at 0 reads "Draft".
+    /// </summary>
+    public int ScheduledVideoCount { get; set; }
+
     public int SeenStudentCount { get; set; }
     public int UnseenStudentCount { get; set; }
     public DateTime CreatedAt { get; set; }

@@ -66,6 +66,13 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
 
         int totalCount = await query.CountAsync();
 
+        // A unit has no publish state of its own — it is a boundary, not a grant
+        // (see VideoUnit's remarks). Its card badge is DERIVED from how many
+        // member videos are actually live, so the two counts below use the exact
+        // same predicate as VideoAssetRepo.GetStudentVisibleUnitsAsync: the
+        // teacher's badge and what students can open can never disagree.
+        var utcNow = DateTime.UtcNow;
+
         // Rolled-up child aggregates via correlated subqueries — one round
         // trip, no per-unit N+1. SeenStudentCount mirrors the definition used
         // by the top-level teacher video list (distinct students with any
@@ -80,6 +87,20 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
                 Title = u.Title,
                 Description = u.Description,
                 VideoCount = _context.VideoAssetUnits.Count(au => au.UnitId == u.Id),
+
+                // Driven off VideoAssetUnits.UnitId (the same index VideoCount
+                // uses) with a PK seek per member video — never a scan of the
+                // teacher's whole video table.
+                PublishedVideoCount = _context.VideoAssetUnits.Count(au =>
+                    au.UnitId == u.Id
+                    && _context.VideoAssets.Any(v => v.Id == au.VideoAssetId
+                        && v.Status == VideoStatus.Published
+                        && (v.PublishDate == null || v.PublishDate <= utcNow))),
+                ScheduledVideoCount = _context.VideoAssetUnits.Count(au =>
+                    au.UnitId == u.Id
+                    && _context.VideoAssets.Any(v => v.Id == au.VideoAssetId
+                        && v.Status == VideoStatus.Published
+                        && v.PublishDate != null && v.PublishDate > utcNow)),
                 SeenStudentCount = _context.VideoAnalytics
                     .Count(a => _context.VideoAssetUnits
                         .Any(au => au.UnitId == u.Id && au.VideoAssetId == a.VideoAssetId)),

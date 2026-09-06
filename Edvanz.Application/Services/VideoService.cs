@@ -517,8 +517,20 @@ public sealed class VideoService : IVideoService
                 video.IsDurationManuallySet = false;
             }
 
-            // Step 7 — publishDate/status (unchanged existing logic).
-            video.PublishDate = request.PublishDate;
+            // Step 7 — publishDate/status.
+            //
+            // An absent PublishDate means "leave the schedule alone", NOT "clear it".
+            // This used to assign unconditionally, and no edit screen sends the field
+            // (the simple form shows the date read-only), so renaming a video
+            // scheduled for next week nulled its date and pushed it live at once —
+            // and announced it to students on the spot, since the dispatcher only
+            // defers while a future date exists. Removing a schedule is now an
+            // explicit request; PATCH /status keeps its own "null = publish now" rule.
+            if (request.ClearPublishDate)
+                video.PublishDate = null;
+            else if (request.PublishDate.HasValue)
+                video.PublishDate = request.PublishDate;
+
             if (request.Status.HasValue)
                 video.Status = request.Status.Value;
 

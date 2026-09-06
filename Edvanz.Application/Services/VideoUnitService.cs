@@ -170,6 +170,8 @@ public sealed class VideoUnitService : IVideoUnitService
             Title = r.Title,
             Description = r.Description,
             VideoCount = r.VideoCount,
+            PublishedVideoCount = r.PublishedVideoCount,
+            ScheduledVideoCount = r.ScheduledVideoCount,
             SeenStudentCount = r.SeenStudentCount,
             UnseenStudentCount = r.UnseenStudentCount,
             CreatedAt = r.CreatedAt,
