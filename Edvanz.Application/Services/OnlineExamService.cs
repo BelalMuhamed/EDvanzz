@@ -451,8 +451,13 @@ public class OnlineExamService : IOnlineExamService
                 _localizer, OnlineExamConstants.Messages.NotFound, HttpStatusCode.NotFound);
 
         // The student id comes from the client — re-prove it belongs to this
-        // tenant before reading anything about them (§3.3 generalized).
-        if (!await _unitOfWork.OnlineExamsRepo.IsTeacherStudentOwnedByTeacherAsync(teacherStudentId, teacherId))
+        // tenant before reading anything about them (§3.3 generalized). This
+        // also returns the name, so the screen can title itself without a
+        // second query: GetReportWithAnswersAsync deliberately does NOT join
+        // TeacherStudent (the student's own review has no use for it).
+        var identity = await _unitOfWork.OnlineExamsRepo
+            .GetOwnedStudentIdentityAsync(teacherStudentId, teacherId);
+        if (identity is null)
             return Result<OnlineExamReviewDto>.Failure(
                 _localizer, OnlineExamConstants.Messages.StudentNotOwned, HttpStatusCode.Forbidden);
 
@@ -482,8 +487,8 @@ public class OnlineExamService : IOnlineExamService
             // for an open attempt would read as a final mark.
             Score = finalized ? report.Score : null,
             Percentage = finalized ? report.Percentage : null,
-            StudentName = report.TeacherStudent?.StudentName,
-            StudentCode = report.TeacherStudent?.StudentCode,
+            StudentName = identity.Value.StudentName,
+            StudentCode = identity.Value.StudentCode,
             Questions = questions.Select(q =>
             {
                 answersByQuestion.TryGetValue(q.Id, out var answer);

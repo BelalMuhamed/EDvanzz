@@ -1,4 +1,6 @@
-﻿using Edvanz.Domain.Enums;
+﻿using System.Text.Json.Serialization;
+using Edvanz.Application.Json;
+using Edvanz.Domain.Enums;
 
 namespace Edvanz.Application.Dtos.Payment;
 
@@ -302,6 +304,14 @@ public class PaymentTransactionDto
     public long? CollectedByUserId { get; set; }
     public string? CollectedByUserName { get; set; }
     public DateTime CollectedAt { get; set; }
+
+    /// <summary>
+    /// The teacher's LOCAL wall-clock at collection (Kind Unspecified), so a receipt shows the
+    /// time the tutor actually took the cash. Its sibling <see cref="CollectedAt"/> is the UTC
+    /// instant. Opted out of the global UTC converter on purpose — stamping a <c>Z</c> here
+    /// would make every client shift the receipt by the Egypt offset.
+    /// </summary>
+    [JsonConverter(typeof(LocalWallClockDateTimeJsonConverter))]
     public DateTime LocalCollectedAt { get; set; }
     public bool IsPartial { get; set; }
     public bool IsProRated { get; set; }

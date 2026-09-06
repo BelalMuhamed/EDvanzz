@@ -131,6 +131,7 @@ public class SessionRepo : GenericRepo<Session, long>, ISessionRepo
     /// <inheritdoc />
     public IQueryable<Session> BuildSessionListQuery(
         long teacherId,
+        DateTime asOfLocalDate,
         string? search = null,
         long? groupId = null,
         OccurrenceType? occurrenceType = null,
@@ -164,8 +165,9 @@ public class SessionRepo : GenericRepo<Session, long>, ISessionRepo
             query = query.Where(s => s.OccurrenceType == occurrenceType.Value);
         }
 
-        // Filter by active/expired status (REQ-SES-015/045)
-        var today = DateTime.UtcNow.Date;
+        // Filter by active/expired status (REQ-SES-015/045). The day comes from the caller so
+        // it is the TEACHER's — see ISessionRepo for why UtcNow.Date was wrong here.
+        var today = asOfLocalDate.Date;
         if (activeOnly)
         {
             query = query.Where(s => s.EndDate >= today);

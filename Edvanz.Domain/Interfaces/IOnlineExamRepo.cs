@@ -145,6 +145,14 @@ public interface IOnlineExamRepo : IGenericRepo<OnlineExam, long>
     Task<bool> IsTeacherStudentOwnedByTeacherAsync(long teacherStudentId, long teacherId);
 
     /// <summary>
+    /// Name + code for one of the teacher's own students, or null when the student
+    /// does not belong to this tenant — so a caller that needs the name gets the
+    /// ownership check for free rather than paying for two queries.
+    /// </summary>
+    Task<(string StudentName, string? StudentCode)?> GetOwnedStudentIdentityAsync(
+        long teacherStudentId, long teacherId);
+
+    /// <summary>
     /// S1 subject label — the teacher's <c>CustomSubject</c> plus their first linked ministry
     /// subject's EN/AR names, in one round trip. Fetched once per student exam-list call (a
     /// single teacher; never per exam → no N+1). Null when the teacher row is missing.

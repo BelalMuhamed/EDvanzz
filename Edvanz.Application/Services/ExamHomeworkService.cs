@@ -81,19 +81,22 @@ public class ExamHomeworkService : IExamHomeworkService
     private readonly IAssignmentScopeResolver _scopeResolver;
     private readonly IExamHomeworkNotifier _examHomeworkNotifier;    // ← Phase 5
     private readonly ISubscriptionGateService _subscriptionGate;
+    private readonly ITimeZoneService _timeZoneService;
 
     public ExamHomeworkService(
         IUnitOfWork unitOfWork,
         IStringLocalizer<Messages> localizer,
         IAssignmentScopeResolver scopeResolver,
         IExamHomeworkNotifier examHomeworkNotifier,                  // ← Phase 5
-        ISubscriptionGateService subscriptionGate)
+        ISubscriptionGateService subscriptionGate,
+        ITimeZoneService timeZoneService)
     {
         _unitOfWork = unitOfWork;
         _localizer = localizer;
         _scopeResolver = scopeResolver;
         _examHomeworkNotifier = examHomeworkNotifier;                // ← Phase 5
         _subscriptionGate = subscriptionGate;
+        _timeZoneService = timeZoneService;
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -122,7 +125,8 @@ public class ExamHomeworkService : IExamHomeworkService
                 System.Net.HttpStatusCode.Forbidden);
 
         // ── 1. Input validation (in-memory rules) ──
-        var inputValidation = ValidateCreateInput(dto);
+        var inputValidation = ValidateCreateInput(
+            dto, _timeZoneService.GetTeacherLocalDate(teacherId));
         if (!inputValidation.IsSuccess) return inputValidation;
 
         // ── 2. Scope ownership validation (DB-bound) ──
@@ -275,7 +279,8 @@ public class ExamHomeworkService : IExamHomeworkService
             return Result<AssignmentTemplateDto>.Failure(
                 _localizer, "TemplateNotFound", HttpStatusCode.NotFound);
 
-        var inputValidation = ValidateUpdateInput(template, dto);
+        var inputValidation = ValidateUpdateInput(
+            template, dto, _timeZoneService.GetTeacherLocalDate(teacherId));
         if (!inputValidation.IsSuccess) return inputValidation;
 
         // REQ-EXH-013 lock — only when pattern is actually changing.
@@ -1341,7 +1346,8 @@ public class ExamHomeworkService : IExamHomeworkService
     // PRIVATE HELPERS — INPUT VALIDATION
     // ══════════════════════════════════════════════════════════════════════
 
-    private Result<AssignmentTemplateDto> ValidateCreateInput(CreateAssignmentTemplateDto dto)
+    private Result<AssignmentTemplateDto> ValidateCreateInput(
+        CreateAssignmentTemplateDto dto, DateTime teacherLocalToday)
     {
         if (string.IsNullOrWhiteSpace(dto.Name) || dto.Name.Length > 200
          || string.IsNullOrWhiteSpace(dto.NameAr) || dto.NameAr.Length > 200)
@@ -1350,7 +1356,9 @@ public class ExamHomeworkService : IExamHomeworkService
         if (dto.Notes is not null && dto.Notes.Length > 2000)
             return Failure("AssignmentNotesTooLong");
 
-        if (dto.AssignmentDate.Date < DateTime.UtcNow.Date)
+        // The tutor's today, not UTC's: between midnight and 2-3 AM Cairo the UTC date is
+        // still yesterday, so this let a genuinely past date through for those hours.
+        if (dto.AssignmentDate.Date < teacherLocalToday)
             return Failure("AssignmentDateInPast");
 
         if (dto.Scopes is null || dto.Scopes.Count == 0)
@@ -1394,7 +1402,7 @@ public class ExamHomeworkService : IExamHomeworkService
     }
 
     private Result<AssignmentTemplateDto> ValidateUpdateInput(
-        AssignmentTemplate template, UpdateAssignmentTemplateDto dto)
+        AssignmentTemplate template, UpdateAssignmentTemplateDto dto, DateTime teacherLocalToday)
     {
         if (dto.RowVersion is null || dto.RowVersion.Length == 0)
             return Failure("BadRequest");
@@ -1416,7 +1424,7 @@ public class ExamHomeworkService : IExamHomeworkService
             if (template.IsRecurring)
                 return Failure("BadRequest");
 
-            if (dto.AssignmentDate.Value.Date < DateTime.UtcNow.Date)
+            if (dto.AssignmentDate.Value.Date < teacherLocalToday)
                 return Failure("AssignmentDateInPast");
         }
 
@@ -1751,7 +1759,11 @@ public class ExamHomeworkService : IExamHomeworkService
             .GetLatestOccurrenceAsync(templateId, teacherId);
 
         if (latest is null) return null;
-        return latest.DueDate >= DateTime.UtcNow.Date ? latest : null;
+
+        // DueDate is a calendar day, so "still in the future" is judged against the TEACHER's
+        // today — UtcNow.Date is still yesterday between midnight and 2-3 AM Cairo, which made
+        // an occurrence that was already due look like a valid insertion target.
+        return latest.DueDate >= _timeZoneService.GetTeacherLocalDate(teacherId) ? latest : null;
     }
 
     /// <summary>Counts grade-pending obligations for an occurrence.</summary>

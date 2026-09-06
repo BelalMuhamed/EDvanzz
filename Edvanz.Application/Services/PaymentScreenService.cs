@@ -1473,7 +1473,8 @@ public class PaymentScreenService : IPaymentScreenService
 
         var (paidCount, proratedCount, unpaidCount) = await repo.GetStudentPaymentStatusCountsAsync(teacherId, monthEnd);
         var perSession = await repo.GetDashboardPerSessionAsync(teacherId, null, null, monthStart, monthEnd);
-        var activeMeta = await repo.GetActiveSessionsCollectionSummaryAsync(teacherId);
+        var activeMeta = await repo.GetActiveSessionsCollectionSummaryAsync(
+            teacherId, _timeZoneService.GetTeacherLocalDate(teacherId));
         var collectors = await repo.GetDashboardPerCollectorAsync(teacherId, monthStart, monthEnd);
         // TotalStudents = students currently assigned to a session (the ones a teacher expects
         // to collect from), not every student on the account.

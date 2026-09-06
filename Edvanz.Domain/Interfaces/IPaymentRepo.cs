@@ -896,8 +896,15 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
     /// REQ-PAY-043: "Collected by Sessions" card — per-session collection
     /// progress while the session is active.
     /// </summary>
+    /// <param name="teacherId">The owning teacher's Id (multi-tenant scope).</param>
+    /// <param name="asOfLocalDate">
+    /// The TEACHER's current local date, from <c>ITimeZoneService.GetTeacherLocalDate</c>.
+    /// Required rather than derived here: <c>EndDate</c> is a calendar day, and
+    /// <c>DateTime.UtcNow.Date</c> is still yesterday between midnight and 2-3 AM Cairo, so a
+    /// session dropped off the card for the first hours of the day it actually ended.
+    /// </param>
     Task<IReadOnlyList<ActiveSessionCollectionSummaryRow>> GetActiveSessionsCollectionSummaryAsync(
-        long teacherId);
+        long teacherId, DateTime asOfLocalDate);
 
     /// <summary>
     /// Gets per-collector breakdown of collected amounts.

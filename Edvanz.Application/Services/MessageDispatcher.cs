@@ -2,6 +2,7 @@ using Edvanz.Application.Dtos;
 using Edvanz.Application.Dtos.DispatcherDtos;
 using Edvanz.Application.Dtos.MessageResolver;
 using Edvanz.Application.IservicesContract;
+using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Entities.Messaging;
 using Edvanz.Domain.Enums;
@@ -22,19 +23,22 @@ namespace Edvanz.Application.Services
         private readonly IBlockResolver _resolver;
         private readonly IStringLocalizer<Messages> _localizer;
         private readonly IMessageLogService _logService;
+        private readonly ITimeZoneService _timeZoneService;
 
         public MessageDispatcher(
             IUnitOfWork unitOfWork,
             IAutomatedTriggerService triggerService,
             IBlockResolver resolver,
             IStringLocalizer<Messages> localizer,
-            IMessageLogService logService)
+            IMessageLogService logService,
+            ITimeZoneService timeZoneService)
         {
             _unitOfWork = unitOfWork;
             _triggerService = triggerService;
             _resolver = resolver;
             _localizer = localizer;
             _logService = logService;
+            _timeZoneService = timeZoneService;
         }
 
         // ── AUTOMATED DISPATCH ────────────────────────────────────────────────
@@ -333,14 +337,21 @@ namespace Edvanz.Application.Services
         /// Builds the absolute UTC DateTime to send at, from the trigger's timing config.
         /// Returns null for Immediate triggers (Hangfire enqueues immediately).
         /// </summary>
-        private static DateTime? BuildScheduledTime(SendTimingType timing, TimeSpan? scheduledTime)
+        private DateTime? BuildScheduledTime(SendTimingType timing, TimeSpan? scheduledTime)
         {
             if (timing == SendTimingType.Immediate || scheduledTime is null)
                 return null;
 
+            // The tutor picked this clock time in THEIR zone, so the send hour has to be built
+            // in local terms and only then converted to the UTC instant the queue runs on.
+            // Adding it to `UtcNow.Date` treated "09:00" as 09:00 UTC — noon in Cairo — so every
+            // scheduled message went out 2-3h after the hour the tutor chose.
+            var localNow = _timeZoneService.ConvertUtcToLocal(DateTime.UtcNow);
+            var localTodayAt = localNow.Date.Add(scheduledTime.Value);
+
             // Fire at the configured clock time today; push to tomorrow if already past.
-            var todayAt = DateTime.UtcNow.Date.Add(scheduledTime.Value);
-            return todayAt > DateTime.UtcNow ? todayAt : todayAt.AddDays(1);
+            if (localTodayAt <= localNow) localTodayAt = localTodayAt.AddDays(1);
+            return _timeZoneService.ConvertLocalToUtc(localTodayAt);
         }
 
         // ── PHASE 2: THRESHOLD HELPERS ────────────────────────────────────────

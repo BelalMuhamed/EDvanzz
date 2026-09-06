@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using Edvanz.Application.Json;
 using Edvanz.Domain.Enums;
 
 namespace Edvanz.Application.Dtos.Payment;
@@ -114,6 +116,7 @@ public class StudentPaymentPeriodDto
     /// Settlement date (latest non-deleted transaction, teacher-local) for a Paid card;
     /// null on Upcoming/Overdue cards. Backs "Paid on: &lt;date&gt;".
     /// </summary>
+    [JsonConverter(typeof(NullableLocalWallClockDateTimeJsonConverter))]
     public DateTime? PaidOnDate { get; set; }
 
     /// <summary>

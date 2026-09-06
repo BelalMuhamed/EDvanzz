@@ -57,6 +57,7 @@ public class SessionService : ISessionService
     private readonly IAttendanceService _attendanceService;
     private readonly IPaymentService _paymentService;
     private readonly ISubscriptionGateService _subscriptionGate;
+    private readonly ITimeZoneService _timeZoneService;
     private readonly IStringLocalizer<Domain.Resources.Messages> _localizer;
 
     /// <summary>
@@ -77,7 +78,8 @@ public class SessionService : ISessionService
         IAttendanceService attendanceService,
         IPaymentService paymentService,
         ISubscriptionGateService subscriptionGate,
-        IStringLocalizer<Domain.Resources.Messages> localizer)
+        IStringLocalizer<Domain.Resources.Messages> localizer,
+        ITimeZoneService timeZoneService)
     {
         _unitOfWork = unitOfWork;
         _nameGenerator = nameGenerator;
@@ -85,6 +87,7 @@ public class SessionService : ISessionService
         _paymentService = paymentService;
         _subscriptionGate = subscriptionGate;
         _localizer = localizer;
+        _timeZoneService = timeZoneService;
     }
 
     // ══════════════════════════════════════════════
@@ -434,6 +437,7 @@ public class SessionService : ISessionService
         string newName = await _nameGenerator.GenerateNextNameAsync(teacherId, language);
 
         // 3. REQ-SES-046: Copy configuration fields, blank start/end dates
+        var teacherLocalToday = _timeZoneService.GetTeacherLocalDate(teacherId);
         var duplicate = new Session
         {
             TeacherId = teacherId,
@@ -444,9 +448,11 @@ public class SessionService : ISessionService
             PaymentType = source.PaymentType,
             SessionAmount = source.SessionAmount,
             // REQ-SES-046: Blank start and end dates — use today as placeholder
-            // The tutor is expected to set the actual dates after duplicating
-            StartDate = DateTime.UtcNow.Date,
-            EndDate = DateTime.UtcNow.Date.AddMonths(1),
+            // The tutor is expected to set the actual dates after duplicating.
+            // The tutor's today, not UTC's: between midnight and 2-3 AM Cairo the UTC date is
+            // still yesterday, and the duplicate would open dated a day before it was made.
+            StartDate = teacherLocalToday,
+            EndDate = teacherLocalToday.AddMonths(1),
             StartTime = source.StartTime,
             DurationMinutes = source.DurationMinutes,
             SessionGroupId = source.SessionGroupId,
@@ -480,6 +486,7 @@ public class SessionService : ISessionService
         // Build the filtered, sorted query via repo
         var query = _unitOfWork.SessionsRepo.BuildSessionListQuery(
             teacherId,
+            _timeZoneService.GetTeacherLocalDate(teacherId),
             request.Search,
             request.GroupId,
             request.OccurrenceType,
@@ -495,7 +502,6 @@ public class SessionService : ISessionService
         var sessions = await _unitOfWork.SessionsRepo.GetPagedAsync(query, request.Page, request.PageSize);
 
         // Build DTOs with student counts and linked session info
-        var today = DateTime.UtcNow.Date;
         var dtos = new List<SessionDto>();
         foreach (var session in sessions)
         {
@@ -579,7 +585,7 @@ public class SessionService : ISessionService
         {
             // Count sessions in each group via the repo's session list query
             var sessionQuery = _unitOfWork.SessionsRepo.BuildSessionListQuery(
-                teacherId, groupId: group.Id);
+                teacherId, _timeZoneService.GetTeacherLocalDate(teacherId), groupId: group.Id);
             int sessionCount = await _unitOfWork.SessionsRepo.CountAsync(sessionQuery);
 
             // Distinct active students across the group's sessions (a TeacherStudent has at
@@ -623,7 +629,8 @@ public class SessionService : ISessionService
         await _unitOfWork.SaveChangesAsync();
 
         // Count sessions for DTO
-        var sessionQuery = _unitOfWork.SessionsRepo.BuildSessionListQuery(teacherId, groupId: groupId);
+        var sessionQuery = _unitOfWork.SessionsRepo.BuildSessionListQuery(
+            teacherId, _timeZoneService.GetTeacherLocalDate(teacherId), groupId: groupId);
         int sessionCount = await _unitOfWork.SessionsRepo.CountAsync(sessionQuery);
 
         var resultDto = new SessionGroupDto
@@ -1099,7 +1106,10 @@ public class SessionService : ISessionService
             SessionGroupId = session.SessionGroupId,
             SessionGroupName = groupName,
             StudentCount = studentCount,
-            IsExpired = session.EndDate < DateTime.UtcNow.Date,
+            // EndDate is a calendar day, so it has to be compared with the TEACHER's today:
+            // UtcNow.Date is still yesterday between midnight and 2-3 AM Cairo, which flipped
+            // the Expired chip on a session for the first hours of the day it actually ended.
+            IsExpired = session.EndDate < _timeZoneService.GetTeacherLocalDate(session.TeacherId),
             LinkedSessions = linkedSessions.Select(ls => new LinkedSessionInfo
             {
                 Id = ls.Id,

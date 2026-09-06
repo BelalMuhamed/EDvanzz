@@ -857,12 +857,17 @@ public class CenterService : ICenterService
 
         // Two BATCHED reads → fixed query cost regardless of teacher count (avoids the per-teacher
         // occurrence loop GetTodaySessionsAsync does). Active-session filter mirrors the teacher home.
+        // One local day for the whole card: EndDate is a calendar day, and UtcNow.Date is still
+        // yesterday between midnight and 2-3 AM Cairo — which dropped a session from the schedule,
+        // and flipped its Expired chip, for the first hours of the day it actually ended. The
+        // batched read spans many teachers, so this anchors on the product zone rather than on
+        // any one of them (all teachers share Africa/Cairo today).
+        var today = _timeZone.ConvertUtcToLocal(DateTime.UtcNow).Date;
+
         var sessions = await _unitOfWork.SessionsRepo
-            .GetActiveSessionsByTeacherIdsAsync(teacherById.Keys.ToList(), DateTime.UtcNow.Date);
+            .GetActiveSessionsByTeacherIdsAsync(teacherById.Keys.ToList(), today);
         var studentCounts = await _unitOfWork.SessionsRepo
             .GetStudentCountsBySessionIdsAsync(sessions.Select(s => s.Id).ToList());
-
-        var today = DateTime.UtcNow.Date;
         var list = sessions
             .Select(s =>
             {

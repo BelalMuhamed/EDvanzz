@@ -99,6 +99,12 @@ public interface ISessionRepo : IGenericRepo<Session, long>
     /// Returns IQueryable so pagination is applied at the database level.
     /// </summary>
     /// <param name="teacherId">The owning teacher's Id (multi-tenant scope).</param>
+    /// <param name="asOfLocalDate">
+    /// The TEACHER's current local date, from <c>ITimeZoneService.GetTeacherLocalDate</c>.
+    /// Required rather than derived here: <c>EndDate</c> is a calendar day, and
+    /// <c>DateTime.UtcNow.Date</c> is still yesterday between midnight and 2-3 AM Cairo, so a
+    /// session was filtered as expired for the first hours of the day it actually ended.
+    /// </param>
     /// <param name="search">Optional search term (partial match on session name).</param>
     /// <param name="groupId">Optional filter: only sessions in this group. Use -1 for ungrouped only.</param>
     /// <param name="occurrenceType">Optional filter: only sessions with this occurrence type.</param>
@@ -108,6 +114,7 @@ public interface ISessionRepo : IGenericRepo<Session, long>
     /// <param name="sortDirection">Sort direction. Defaults to Desc.</param>
     IQueryable<Session> BuildSessionListQuery(
         long teacherId,
+        DateTime asOfLocalDate,
         string? search = null,
         long? groupId = null,
         OccurrenceType? occurrenceType = null,

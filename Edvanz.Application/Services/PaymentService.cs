@@ -2469,7 +2469,8 @@ public class PaymentService : IPaymentService
     public async Task<Result<List<SessionCollectionSummaryDto>>> GetSessionsCollectionSummaryAsync(
         long teacherId)
     {
-        var rows = await _unitOfWork.PaymentsRepo.GetActiveSessionsCollectionSummaryAsync(teacherId);
+        var rows = await _unitOfWork.PaymentsRepo.GetActiveSessionsCollectionSummaryAsync(
+            teacherId, _timeZoneService.GetTeacherLocalDate(teacherId));
 
         var dtos = rows.Select(r => new SessionCollectionSummaryDto
         {

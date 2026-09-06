@@ -454,6 +454,21 @@ public class OnlineExamRepo : GenericRepo<OnlineExam, long>, IOnlineExamRepo
             .ToListAsync();
     }
     /// <inheritdoc />
+    /// <inheritdoc />
+    public async Task<(string StudentName, string? StudentCode)?> GetOwnedStudentIdentityAsync(
+        long teacherStudentId, long teacherId)
+    {
+        var row = await _context.TeacherStudents
+            .Where(ts => ts.Id == teacherStudentId && ts.TeacherId == teacherId)
+            .Select(ts => new { ts.StudentName, ts.StudentCode })
+            .AsNoTracking()
+            .FirstOrDefaultAsync();
+
+        // Null means "not this teacher's student" — the caller treats that as the
+        // ownership failure, so no separate existence check is needed.
+        return row is null ? null : (row.StudentName, row.StudentCode);
+    }
+
     public async Task<bool> IsTeacherStudentOwnedByTeacherAsync(long teacherStudentId, long teacherId)
     {
         return await _context.TeacherStudents

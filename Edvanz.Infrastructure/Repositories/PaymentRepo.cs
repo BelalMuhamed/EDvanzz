@@ -2754,9 +2754,10 @@
 
         /// <inheritdoc />
         public async Task<IReadOnlyList<ActiveSessionCollectionSummaryRow>> GetActiveSessionsCollectionSummaryAsync(
-            long teacherId)
+            long teacherId, DateTime asOfLocalDate)
         {
-            var today = DateTime.UtcNow.Date;
+            // The day comes from the caller so it is the TEACHER's — see IPaymentRepo.
+            var today = asOfLocalDate.Date;
 
             var sessions = await _context.Sessions
                 .Where(s => s.TeacherId == teacherId && s.EndDate >= today)
