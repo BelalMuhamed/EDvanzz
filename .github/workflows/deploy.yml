@@ -16,6 +16,15 @@ jobs:
       - run: dotnet restore
       - run: dotnet build -c Release --no-restore
 
+      # ── Timezone guard ───────────────────────────────────────────────────────
+      # Fails the build on a server-clock read (DateTime.Now / .ToLocalTime()) or a business
+      # "today" derived from DateTime.UtcNow.Date. Both are invisible in development — the CI
+      # runner and the Azure Linux plan are UTC — and wrong in Cairo, where UtcNow.Date is still
+      # yesterday between midnight and 2-3 AM. Deliberate exceptions live in the script's ALLOW
+      # list with their reason. See TIMEZONE_STANDARD.md.
+      - name: 'Gate: no server-clock or UTC-day derivations'
+        run: ./scripts/check-datetime-usage.sh
+
       # ── EF migrations ────────────────────────────────────────────────────────
       # Generate an IDEMPOTENT migration script from the committed migrations and apply it to
       # Azure SQL BEFORE the new app version is swapped in. Migrations are NOT applied at app

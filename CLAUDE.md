@@ -896,6 +896,50 @@ Always cross-reference code comments to the relevant `REQ-*` / `BR-*` IDs.
 
 ---
 
+## 11b. Time, dates & timezones (hardened 2026-09-06)
+
+Authoritative detail: **`TIMEZONE_STANDARD.md`** (backend) and the app's own
+`TIMEZONE_STANDARD.md` (Flutter). The short version:
+
+- **Three kinds, three types.** A moment-in-time is a `DateTime` in UTC; a calendar day is a
+  `DateOnly` (wire `"2026-09-06"`); a wall-clock time-of-day is a `TimeOnly` (wire
+  `"22:53:00"`). Pick the type by what the value MEANS — the wire cannot tell them apart on
+  its own, and that ambiguity is what produced the 2-3h bugs.
+- **The wire now states its zone.** `UtcDateTimeJsonConverter` /
+  `NullableUtcDateTimeJsonConverter` (`Edvanz.Application/Json/`, registered in `Program.cs`
+  AND repeated in `TeacherStudentController.StreamJsonOptions`) serialize every `DateTime` as
+  `...Z`. `Unspecified` is STAMPED, never shifted — everything persisted is already UTC.
+  Reading is left at the framework default, so what callers may send and what gets persisted
+  are unchanged. Two fields opt out per-property with
+  `LocalWallClockDateTimeJsonConverter` because they are deliberately the teacher's LOCAL
+  wall-clock: `PaymentTransaction.LocalCollectedAt` and the student tracking `PaidOnDate`.
+- **Never retype a REQUEST DTO field to `DateOnly`** — deployed clients send full ISO strings
+  and `DateOnly` cannot read them, which 400s them. Responses only.
+- **A business "today" is the TENANT's**, via `ITimeZoneService.GetTeacherLocalDate` — never
+  `DateTime.UtcNow.Date`, which is still YESTERDAY between midnight and 2-3 AM Cairo. A repo
+  that needs "today" takes it as a REQUIRED parameter from its calling service
+  (`ISessionRepo.BuildSessionListQuery`, `IPaymentRepo.GetActiveSessionsCollectionSummaryAsync`)
+  rather than reading a clock, so the compiler enforces the rule.
+- **Two deliberate exceptions, do not "fix" them**: `AttendanceAutoAbsentService` uses a coarse
+  UTC window on purpose (the per-teacher worker re-gates locally); the subscription module
+  compares `EndDate.Date` to `UtcNow.Date` throughout and is internally consistent, with its
+  dispatcher at 09:00 Cairo where both dates agree — migrate it whole or not at all.
+- **Enforcement.** `scripts/check-datetime-usage.sh` runs as a CI gate before the migration
+  gates and fails on `DateTime.Now`, `DateTime.Today`, `.ToLocalTime()` and
+  `DateTime.UtcNow.Date` outside the allowlist. On the app side
+  `test/core/api_date_time_guard_test.dart` fails on a bare `DateTime.parse`/`tryParse` outside
+  `lib/core/utils/api_date_time.dart`; models parse through `parseApiUtcDateTime` (instant) /
+  `parseApiCalendarDate` (day) / `parseApiLocalDateTime` (already-local) /
+  `parseApiDurationMinutes` (a .NET `TimeSpan` such as `"01:01:00"`, which `int.tryParse`
+  cannot read — it silently became 0 on the student exam list).
+- **Fixed with this change (do not reintroduce):** the student online-exam list re-read the
+  already-Cairo `examDate` + `examTime` pair as UTC, so a 22:53 exam showed at 01:53 the NEXT
+  day and its entry gate ran 2-3h late while the take screen (real `startDateTime` instant)
+  showed the right time; `duration` (a `TimeSpan`) parsed to 0 so every card read "0 min";
+  `prorationSetAt` (an audit instant) was read as a calendar day; scheduled messages built
+  `UtcNow.Date + 09:00` and so went out at noon Cairo; a session transfer between midnight and
+  3 AM dated its carried-forward period into the PREVIOUS billing month.
+
 ## 12. What NOT to Do
 
 | Anti-pattern | Reason |
@@ -911,6 +955,10 @@ Always cross-reference code comments to the relevant `REQ-*` / `BR-*` IDs.
 | Fabricating transactional rows directly in seeders | Referentially inconsistent state |
 | Throwing exceptions for business-logic failures | Use `Result<T>.Failure(...)` |
 | Hard-deleting `FileObject` rows or blobs inline | Only `file-object-gc` reaps (Detach instead); inline deletes orphan blobs (§5.5) |
+| `DateTime.UtcNow.Date` as a business "today" | Still YESTERDAY between midnight and 2-3 AM Cairo; use `ITimeZoneService.GetTeacherLocalDate` (§11b) |
+| A calendar day typed `DateTime` on a response DTO | Use `DateOnly` so the wire says it is a day; a `DateTime` now carries a meaningless `Z` (§11b) |
+| Retyping a REQUEST DTO field to `DateOnly` | Deployed clients send full ISO strings; `DateOnly` cannot read them and 400s them (§11b) |
+| Bare `DateTime.parse`/`tryParse` in a Flutter model | Silently assumes device-local and shifts an instant by 2-3h; use the `api_date_time.dart` helpers (§11b) |
 | Re-enabling anonymous blob access / exposing `BlobPath` | Files are JWT-gated via `/api/files/{fileId}`; anonymous blob 401/403/409 is intended (§5.5) |
 
 <!-- ci: markdown-only edits do not trigger the deploy workflow (paths-ignore). -->

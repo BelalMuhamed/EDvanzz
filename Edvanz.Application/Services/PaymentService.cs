@@ -3131,14 +3131,20 @@ public class PaymentService : IPaymentService
             // Create carried-forward period if outstanding balance exists
             if (summary.OutstandingBalance > 0)
             {
+                // The carried period is stamped with the TEACHER's day, not UTC's. UtcNow.Date is
+                // still yesterday between midnight and 2-3 AM Cairo, so a transfer done in those
+                // hours on the 1st dated the carried debt into the PREVIOUS billing month — and
+                // the buckets, which are judged through the selected month (§7.4), would then
+                // report it as last month's arrears.
+                var transferLocalDay = _timeZoneService.GetTeacherLocalDate(dto.TeacherId);
                 var carriedPeriod = new PaymentPeriod
                 {
                     TeacherId = dto.TeacherId,
                     SessionId = dto.DestinationSessionId,
                     TeacherStudentId = dto.TeacherStudentId,
                     PeriodType = PeriodType.Monthly,
-                    PeriodStart = DateTime.UtcNow.Date,
-                    PeriodEnd = DateTime.UtcNow.Date,
+                    PeriodStart = transferLocalDay,
+                    PeriodEnd = transferLocalDay,
                     AmountDue = summary.OutstandingBalance,
                     PaymentStatus = PaymentStatus.Unpaid,
                     PeriodSequence = 0, // Carried-forward appears before regular periods

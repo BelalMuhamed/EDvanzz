@@ -34,6 +34,7 @@ using System.IO.Compression;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Edvanz.Application.Json;
 using HangfireDashboardAuthFilter = Edvanz.API.Filters.HangfireDashboardAuthFilter;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -45,6 +46,18 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        // Every DateTime this API returns is a UTC instant, but EF materializes SQL Server
+        // datetime2 as Kind=Unspecified, which serializes with NO suffix — while the same
+        // logical field computed in memory (DateTime.UtcNow echoed back in a create response)
+        // is Kind=Utc and DOES carry a Z. Clients therefore saw one field in two shapes, and a
+        // suffix-less instant reads as LOCAL in Dart/JS, landing 2-3h off for Egypt. These make
+        // the payload state its zone. Reading is unchanged, so nothing about what callers may
+        // send, or what gets persisted, moves. Fields that are deliberately a LOCAL wall-clock
+        // opt out per-property with LocalWallClockDateTimeJsonConverter; a calendar day belongs
+        // in a DateOnly, which these never see. See TIMEZONE_STANDARD.md.
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
+        options.JsonSerializerOptions.Converters.Add(new NullableUtcDateTimeJsonConverter());
     });
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 

@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Edvanz.Application.Json;
 
 namespace Edvanz.API.Controllers;
 
@@ -31,12 +32,22 @@ public class TeacherStudentController : ModuleSixApiBaseController
 {
     private readonly ITeacherStudentService _studentService;
 
-    /// <summary>Web-default (camelCase) JSON + string enums, matching the global controller options —
-    /// used to hand-serialize the NDJSON progress/result lines on the streaming bulk-import endpoint.</summary>
+    /// <summary>
+    /// Web-default (camelCase) JSON + string enums, matching the global controller options —
+    /// used to hand-serialize the NDJSON progress/result lines on the streaming bulk-import
+    /// endpoint. This stream builds its own options instead of using the pipeline's, so it has
+    /// to repeat every converter — including the UTC stamping — or a timestamp would travel in
+    /// one shape on this route and another everywhere else. Keep in sync with Program.cs.
+    /// </summary>
     private static readonly JsonSerializerOptions StreamJsonOptions =
         new(JsonSerializerDefaults.Web)
         {
-            Converters = { new JsonStringEnumConverter() },
+            Converters =
+            {
+                new JsonStringEnumConverter(),
+                new UtcDateTimeJsonConverter(),
+                new NullableUtcDateTimeJsonConverter(),
+            },
         };
     private readonly IStudentBarcodeService _barcodeService;
 
