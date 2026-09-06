@@ -1122,10 +1122,19 @@ public class EdvanzDbContext(DbContextOptions<EdvanzDbContext> options) : DbCont
             // any future writer that doesn't set it) are never compared against each other. A
             // Hangfire retry that re-executes an already-committed job now hits this
             // constraint instead of inserting a duplicate row / firing a duplicate push.
-            entity.HasIndex(n => new { n.SourceType, n.SourceEntityId })
+            // Idempotency key is per RECIPIENT. It used to be (SourceType,
+            // SourceEntityId) alone, which was fine while every writer sent to a
+            // single user — but content-publish notifications fan out to a whole
+            // session, and the second student would have collided with the first.
+            //
+            // Adding UserId only ever WEAKENS a unique constraint, so this can
+            // never fail to build against existing data, and the three
+            // single-recipient writers (Renewal, PaymentRejected,
+            // CapacityResolved) keep exactly the guarantee they had.
+            entity.HasIndex(n => new { n.UserId, n.SourceType, n.SourceEntityId })
                 .IsUnique()
                 .HasFilter("[SourceEntityId] IS NOT NULL")
-                .HasDatabaseName("UX_UserNotifications_SourceType_SourceEntityId");
+                .HasDatabaseName("UX_UserNotifications_User_SourceType_SourceEntityId");
         });
         #endregion
 

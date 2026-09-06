@@ -118,6 +118,17 @@ public sealed class OnlineExamReviewDto
     public string? ReportStatus { get; set; }
     public decimal? Score { get; set; }
     public decimal? Percentage { get; set; }
+
+    /// <summary>
+    /// Whose sheet this is. Filled ONLY by the teacher-facing answer-sheet
+    /// endpoint (T16) so the screen can title itself; the student's own review
+    /// leaves it null — they already know who they are.
+    /// </summary>
+    public string? StudentName { get; set; }
+
+    /// <inheritdoc cref="StudentName"/>
+    public string? StudentCode { get; set; }
+
     public List<OnlineExamReviewQuestionDto> Questions { get; set; } = new();
 }
 public sealed class SubmitOnlineExamAnswerRequest

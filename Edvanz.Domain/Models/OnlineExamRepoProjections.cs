@@ -117,3 +117,36 @@ public sealed class TeacherSubjectNameRow
     public string? SubjectNameEn { get; set; }
     public string? SubjectNameAr { get; set; }
 }
+/// <summary>
+/// One question's outcome across every FINALIZED attempt at an exam — the row
+/// behind the teacher's per-question analysis.
+///
+/// Only finalized reports are counted: an in-progress answer can still change,
+/// and a difficulty figure that moves while students are mid-exam is worse than
+/// no figure. <see cref="AttemptedCount"/> is the denominator, not the assigned
+/// headcount, so "8 of 10 got it right" always means eight of the ten who
+/// actually answered it.
+/// </summary>
+public sealed class OnlineExamQuestionStatRow
+{
+    public long QuestionId { get; set; }
+
+    /// <summary>Finalized attempts that answered this question at all.</summary>
+    public int AttemptedCount { get; set; }
+
+    /// <summary>Of <see cref="AttemptedCount"/>, how many earned the question's full degree.</summary>
+    public int CorrectCount { get; set; }
+}
+
+/// <summary>
+/// How often one wrong option was picked for a question. The most-picked wrong
+/// option is the actionable half of question analysis — it names the specific
+/// misconception a class shares, not merely that the question was hard.
+/// </summary>
+public sealed class OnlineExamWrongOptionRow
+{
+    public long QuestionId { get; set; }
+    public long OptionId { get; set; }
+    public string OptionText { get; set; } = string.Empty;
+    public int PickedCount { get; set; }
+}

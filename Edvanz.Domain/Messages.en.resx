@@ -2706,4 +2706,16 @@
   <data name="VideoSourceMustBeYouTube" xml:space="preserve">
     <value>Google Drive links don't play inside the student app. Upload the video to YouTube (unlisted works) and paste that link.</value>
   </data>
+  <data name="VideoPublishedNotifTitle" xml:space="preserve">
+    <value>New video</value>
+  </data>
+  <data name="VideoPublishedNotifBody" xml:space="preserve">
+    <value>Your teacher added a new video: {0}</value>
+  </data>
+  <data name="OnlineExamPublishedNotifTitle" xml:space="preserve">
+    <value>New online exam</value>
+  </data>
+  <data name="OnlineExamPublishedNotifBody" xml:space="preserve">
+    <value>A new online exam is waiting for you: {0}</value>
+  </data>
 </root>

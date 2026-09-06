@@ -60,6 +60,8 @@ public static class InfrastructureServiceExtensions
         services.AddScoped<IPaymentReportExportService, PaymentReportExportService>();
         // Direct Chat — dispatcher (holds IBackgroundJobClient; Infrastructure only)
         services.AddScoped<IChatPushDispatcher, ChatPushDispatcher>();
+        // Content-publish announcements — dispatcher (holds IBackgroundJobClient)
+        services.AddScoped<IContentPublishNotificationDispatcher, ContentPublishNotificationDispatcher>();
         // ════════════════════════════════════════════════
         // SUBSCRIPTION MANAGEMENT MODULE — Phase 05 (v1.2)
         // ════════════════════════════════════════════════

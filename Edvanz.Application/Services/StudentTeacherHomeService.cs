@@ -244,11 +244,15 @@ public sealed class StudentTeacherHomeService : IStudentTeacherHomeService
         if (!visible) return section;
         try
         {
-            // pageSize 1: we only need the total count for the tile, not the rows.
-            var request = new StudentVideoListRequest { Page = 1, PageSize = 1 };
-            var result = await _videoService.GetStudentVideosAsync(teacherId, teacherStudentId, request, language);
-            if (result.IsSuccess && result.Data is { } page)
-                section.Count = page.totalCount;
+            // Two COUNTs over the same visible-video predicate the student's own
+            // list uses. Replaces fetching a page of one row purely to read its
+            // total, and carries the unopened count the tile now shows.
+            var result = await _videoService.GetStudentVideoProgressAsync(teacherId, teacherStudentId);
+            if (result.IsSuccess && result.Data is { } progress)
+            {
+                section.Count = progress.Total;
+                section.NotStartedCount = progress.NotStarted;
+            }
         }
         catch (Exception ex)
         {

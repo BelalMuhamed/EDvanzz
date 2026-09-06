@@ -1,3 +1,4 @@
+using Edvanz.Domain.Enums;
 ﻿using Edvanz.Domain.Entities;
 
 namespace Edvanz.Domain.Interfaces;
@@ -46,6 +47,17 @@ public interface IUserNotificationRepo : IGenericRepo<UserNotification, long>
     /// reminder worker (§7.3) and the renewal-confirmation Hangfire job (§5.9).
     /// SaveChanges is NOT called here — the caller owns the unit of work.
     /// </summary>
+    /// <summary>
+    /// Which of <paramref name="userIds"/> already have a notification for this exact
+    /// (source, entity) pair — the pre-check that keeps a content-publish fan-out from
+    /// re-notifying anyone on a Hangfire retry.
+    ///
+    /// The unique index is still the real guarantee; this only avoids provoking it (and
+    /// the wasted push that would precede it) on the common path.
+    /// </summary>
+    Task<IReadOnlyList<long>> GetUserIdsAlreadyNotifiedAsync(
+        NotificationSourceType sourceType, long sourceEntityId, IReadOnlyCollection<long> userIds);
+
     Task InsertNotificationAsync(UserNotification notification);
 
     // ══════════════════════════════════════════════

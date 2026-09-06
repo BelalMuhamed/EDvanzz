@@ -218,3 +218,53 @@ public sealed class UpdateOnlineExamStudentStatusRequest
 {
     public StudentOnlineExamStatus Status { get; set; }
 }
+/// <summary>
+/// T15 — per-question analysis for the teacher.
+///
+/// The exam module could tell a teacher that the class averaged 62%, and
+/// nothing about WHY. This names the questions the class actually got wrong,
+/// hardest first, and for each one the wrong option most of them chose — which
+/// is usually a specific shared misconception worth five minutes of the next
+/// lesson.
+/// </summary>
+public sealed class OnlineExamQuestionAnalysisDto
+{
+    /// <summary>Finalized attempts this analysis is computed over.</summary>
+    public int FinalizedAttempts { get; set; }
+
+    /// <summary>Questions, hardest first (lowest correct rate).</summary>
+    public List<OnlineExamQuestionAnalysisRowDto> Questions { get; set; } = new();
+}
+
+/// <summary>One question's difficulty row on <see cref="OnlineExamQuestionAnalysisDto"/>.</summary>
+public sealed class OnlineExamQuestionAnalysisRowDto
+{
+    public long QuestionId { get; set; }
+    public string QuestionText { get; set; } = string.Empty;
+    public decimal Degree { get; set; }
+
+    /// <summary>Position in the exam (1-based), so the teacher can find it on paper.</summary>
+    public int Order { get; set; }
+
+    /// <summary>Finalized attempts that answered this question at all.</summary>
+    public int AttemptedCount { get; set; }
+
+    /// <summary>Of <see cref="AttemptedCount"/>, how many earned full marks.</summary>
+    public int CorrectCount { get; set; }
+
+    /// <summary>
+    /// Finalized attempts that left this question blank
+    /// (<see cref="FinalizedAttempts"/> − <see cref="AttemptedCount"/>). A question
+    /// everybody skipped reads very differently from one everybody got wrong.
+    /// </summary>
+    public int SkippedCount { get; set; }
+
+    /// <summary>Correct ÷ attempted, 0-100, 1 dp. Null when nobody attempted it.</summary>
+    public decimal? CorrectPercentage { get; set; }
+
+    /// <summary>The wrong option picked most often, or null when nobody picked a wrong one.</summary>
+    public string? TopWrongOptionText { get; set; }
+
+    /// <summary>How many attempts picked <see cref="TopWrongOptionText"/>.</summary>
+    public int TopWrongOptionCount { get; set; }
+}

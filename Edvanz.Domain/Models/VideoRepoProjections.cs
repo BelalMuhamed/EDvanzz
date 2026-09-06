@@ -134,6 +134,14 @@ public sealed class StudentVideoUnitRow
 
     /// <summary>Of <see cref="VideoCount"/>, how many carry a quiz (<c>VideoExam</c>).</summary>
     public int QuizVideoCount { get; set; }
+
+    /// <summary>
+    /// Of <see cref="VideoCount"/>, how many THIS student has watched to the
+    /// completion threshold (<c>VideoWatchRules.IsWatched</c>). Drives the unit
+    /// progress bar — the unit list previously reported only how much content
+    /// existed, never how much of it the student had got through.
+    /// </summary>
+    public int WatchedVideoCount { get; set; }
 }
 
 /// <summary>

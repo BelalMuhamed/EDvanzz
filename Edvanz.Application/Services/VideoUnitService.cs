@@ -240,7 +240,8 @@ public sealed class VideoUnitService : IVideoUnitService
                 _localizer, VideoConstants.Messages.VideoUnitNotFound, HttpStatusCode.NotFound);
 
         var (rows, totalCount) = await _unitOfWork.VideoUnitsRepo
-            .GetVideosInUnitPagedAsync(unitId, teacherId, request.Search, request.Page, request.PageSize);
+            .GetVideosInUnitPagedAsync(unitId, teacherId, request.Search, request.Page, request.PageSize,
+                request.Status);
 
         // Batch-resolve the page's cover-photo file ids to opaque PublicId + gated URL in one
         // query — identical to VideoService.GetTeacherVideosAsync so both video lists match.

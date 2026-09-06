@@ -5,6 +5,7 @@ using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Enums;
+using Edvanz.Domain.Helpers;
 using Edvanz.Domain.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -51,6 +52,7 @@ public sealed class VideoService : IVideoService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IVideoScopeResolver _scopeResolver;
     private readonly IVideoUrlParser _urlParser;
+    private readonly IContentPublishNotificationDispatcher _publishNotifications;
     private readonly ISubscriptionGateService _subscriptionGate;
     private readonly IFileAccessService _fileAccess;
     private readonly IVideoUnitService _videoUnitService;
@@ -60,6 +62,7 @@ public sealed class VideoService : IVideoService
         IUnitOfWork unitOfWork,
         IVideoScopeResolver scopeResolver,
         IVideoUrlParser urlParser,
+        IContentPublishNotificationDispatcher publishNotifications,
         ISubscriptionGateService subscriptionGate,
         IFileAccessService fileAccess,
         IVideoUnitService videoUnitService,
@@ -68,6 +71,7 @@ public sealed class VideoService : IVideoService
         _unitOfWork = unitOfWork;
         _scopeResolver = scopeResolver;
         _urlParser = urlParser;
+        _publishNotifications = publishNotifications;
         _subscriptionGate = subscriptionGate;
         _fileAccess = fileAccess;
         _videoUnitService = videoUnitService;
@@ -373,12 +377,21 @@ public sealed class VideoService : IVideoService
     public async Task<Result<bool>> SetVideoStatusAsync(
         long teacherId, long videoAssetId, SetVideoStatusRequest request)
     {
+        // Read the pre-change state so only a real Draft→Published transition
+        // announces anything. Re-saving an already-published video must stay silent.
+        var before = await _unitOfWork.VideoAssetsRepo
+            .GetVideoByIdAndTeacherAsync(videoAssetId, teacherId);
+        bool wasPublished = before is not null && before.Status == VideoStatus.Published;
+
         bool updated = await _unitOfWork.VideoAssetsRepo.SetVideoStatusAsync(
             videoAssetId, teacherId, request.Status, request.PublishDate);
 
         if (!updated)
             return Result<bool>.Failure(
                 _localizer, VideoConstants.Messages.VideoNotFound, HttpStatusCode.NotFound);
+
+        if (!wasPublished && request.Status == VideoStatus.Published)
+            AnnounceVideoPublished(teacherId, videoAssetId, request.PublishDate);
 
         return Result<bool>.Success(true, _localizer, VideoConstants.Messages.VideoStatusUpdated);
     }
@@ -397,6 +410,13 @@ public sealed class VideoService : IVideoService
         if (title.Length == 0)
             return Result<VideoDetailDto>.Failure(
                 _localizer, VideoConstants.Messages.InvalidUrl, HttpStatusCode.BadRequest);
+
+        // Captured BEFORE any mutation: only a real transition into "visible to
+        // students" announces anything, so editing an already-published video
+        // stays silent (the per-recipient dedupe would catch a repeat anyway,
+        // but there is no reason to queue the work).
+        bool wasVisibleToStudents = video.Status == VideoStatus.Published
+            && (video.PublishDate is null || video.PublishDate <= DateTime.UtcNow);
 
         // Step 2 — in-application concurrency check, before any mutation.
         if (!request.RowVersion.AsSpan().SequenceEqual(video.RowVersion))
@@ -701,6 +721,13 @@ public sealed class VideoService : IVideoService
                 await _unitOfWork.RollbackAsync();
             throw;
         }
+
+        // Post-commit side effect (§5.1 ordering): the edit is durable before any
+        // student is told about it, so a queue failure can never announce a video
+        // whose save was rolled back.
+        if (!wasVisibleToStudents && video.Status == VideoStatus.Published)
+            AnnounceVideoPublished(teacherId, videoAssetId, video.PublishDate);
+
         // All file changes are part of the committed transaction now — no post-commit blob work,
         // so no partial-failure "warning" path. Resolve the final attachment set for the response.
         var currentAttachments = await _unitOfWork.FileObjectsRepo
@@ -832,7 +859,73 @@ public sealed class VideoService : IVideoService
         dto.UnseenStudentCount = aggregates.UnseenCount;
         dto.CompletedStudentCount = aggregates.CompletedCount;
 
+        (dto.Audience, dto.AudienceStudentCount) =
+            await BuildAudienceAsync(teacherId, videoAssetId);
+
         return Result<VideoOverviewDto>.Success(dto, _localizer);
+    }
+
+    /// <summary>
+    /// Resolves a video's scope rows into named session / group targets for the
+    /// read-only Overview, mirroring how the unit screen presents its own scopes
+    /// (<c>VideoUnitService</c>) so the two read identically to a teacher.
+    ///
+    /// Names and counts are batch-resolved — one round trip per target type, and
+    /// none at all when the video has no scope of that type. A target that no
+    /// longer resolves (session deleted out from under the scope) falls back to
+    /// its id rather than dropping the row, so the teacher still sees that an
+    /// audience entry exists.
+    /// </summary>
+    private async Task<(List<VideoUnitScopeDto> Audience, int StudentCount)> BuildAudienceAsync(
+        long teacherId, long videoAssetId)
+    {
+        var withScopes = await _unitOfWork.VideoAssetsRepo
+            .GetVideoWithScopesAsync(videoAssetId, teacherId);
+        if (withScopes is null || withScopes.Scopes.Count == 0)
+            return (new List<VideoUnitScopeDto>(), 0);
+
+        var sessionIds = withScopes.Scopes
+            .Where(s => s.ScopeType == VideoScopeType.Session && s.SessionId.HasValue)
+            .Select(s => s.SessionId!.Value).Distinct().ToList();
+        var groupIds = withScopes.Scopes
+            .Where(s => s.ScopeType == VideoScopeType.SessionGroup && s.SessionGroupId.HasValue)
+            .Select(s => s.SessionGroupId!.Value).Distinct().ToList();
+
+        var sessionById = (sessionIds.Count > 0
+                ? await _unitOfWork.SessionsRepo.GetSessionTargetSummariesAsync(teacherId, sessionIds)
+                : new List<ScopeTargetSummaryRow>())
+            .ToDictionary(r => r.Id);
+        var groupById = (groupIds.Count > 0
+                ? await _unitOfWork.SessionsRepo.GetGroupTargetSummariesAsync(teacherId, groupIds)
+                : new List<ScopeTargetSummaryRow>())
+            .ToDictionary(r => r.Id);
+
+        var audience = withScopes.Scopes.Select(scope =>
+        {
+            bool isSession = scope.ScopeType == VideoScopeType.Session && scope.SessionId.HasValue;
+            long targetId = isSession ? scope.SessionId!.Value : scope.SessionGroupId ?? 0;
+            var lookup = isSession ? sessionById : groupById;
+
+            var row = lookup.TryGetValue(targetId, out var found)
+                ? found
+                : new ScopeTargetSummaryRow { Id = targetId, Name = $"#{targetId}", StudentCount = 0 };
+
+            return new VideoUnitScopeDto
+            {
+                ScopeType = scope.ScopeType,
+                Target = new VideoScopeTargetDto
+                {
+                    Id = row.Id,
+                    Name = row.Name,
+                    StudentCount = row.StudentCount,
+                },
+            };
+        }).ToList();
+
+        int studentCount = await _unitOfWork.SessionsRepo
+            .CountStudentsInTargetsAsync(teacherId, sessionIds, groupIds);
+
+        return (audience, studentCount);
     }
 
     /// <summary>
@@ -900,7 +993,8 @@ public sealed class VideoService : IVideoService
         GetTeacherVideosAsync(long teacherId, TeacherVideoListRequest request)
     {
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
-            .GetTeacherVideosPagedAsync(teacherId, request.Search, request.Page, request.PageSize);
+            .GetTeacherVideosPagedAsync(teacherId, request.Search, request.Page, request.PageSize,
+                request.Status);
 
         // Batch-resolve the page's cover-photo file ids to opaque PublicId + gated URL in one
         // query (never a per-row lookup) — same approach as the student list. BuildGatedUrl is
@@ -1035,7 +1129,9 @@ public sealed class VideoService : IVideoService
         if (moduleGate is not null) return moduleGate;
 
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
-            .GetVisibleVideosForStudentInUnitAsync(teacherId, teacherStudentId, unitId, request.Page, request.PageSize);
+            .GetVisibleVideosForStudentInUnitAsync(
+                teacherId, teacherStudentId, unitId, request.Page, request.PageSize,
+                request.Search, request.UnwatchedOnly);
 
         var response = await BuildStudentVideoPageAsync(
             teacherId, rows, totalCount, request.Page, request.PageSize, studentLanguage);
@@ -1043,6 +1139,29 @@ public sealed class VideoService : IVideoService
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    public async Task<Result<StudentVideoProgressDto>> GetStudentVideoProgressAsync(
+        long teacherId, long teacherStudentId)
+    {
+        var moduleGate = await CheckModuleActiveAsync<StudentVideoProgressDto>(teacherId);
+        if (moduleGate is not null) return moduleGate;
+
+        var (total, seen) = await _unitOfWork.VideoAssetsRepo
+            .GetStudentVideoSeenCountsAsync(teacherId, teacherStudentId);
+
+        return Result<StudentVideoProgressDto>.Success(
+            new StudentVideoProgressDto
+            {
+                Total = total,
+                Seen = seen,
+                // Clamped: seen counts analytics rows, and a video unscoped
+                // after the student had already opened it leaves the row
+                // behind, which could otherwise drive this negative.
+                NotStarted = total > seen ? total - seen : 0,
+            },
+            _localizer);
+    }
+
     public async Task<Result<List<StudentVideoUnitDto>>> GetStudentUnitsAsync(
         long teacherId, long teacherStudentId, string? studentLanguage)
     {
@@ -1062,6 +1181,7 @@ public sealed class VideoService : IVideoService
             Description = u.Description,
             VideoCount = u.VideoCount,
             QuizCount = u.QuizVideoCount,
+            WatchedCount = u.WatchedVideoCount,
             Subject = subject,
         }).ToList();
 
@@ -1129,19 +1249,12 @@ public sealed class VideoService : IVideoService
     }
 
     /// <summary>
-    /// V4 — 3-state watch indicator from the student's accumulated watch seconds vs. the video
-    /// duration. Completed at ≥ <c>VideoConstants.CompletionThresholdPercent</c> (same threshold
-    /// the teacher analytics <c>completedCount</c> uses, so the two never disagree).
+    /// V4 — 3-state watch indicator. Delegates to <see cref="VideoWatchRules"/>, which the unit
+    /// watched-count and the home "not started" count also use, so the badge a student sees on a
+    /// video can never contradict the progress its unit reports.
     /// </summary>
     private static VideoWatchStatus ComputeWatchStatus(long totalWatchSeconds, int durationSeconds)
-    {
-        if (totalWatchSeconds <= 0) return VideoWatchStatus.NotStarted;
-        if (durationSeconds <= 0) return VideoWatchStatus.InProgress; // duration not yet known
-        double pct = (double)totalWatchSeconds / durationSeconds * 100.0;
-        return pct >= VideoConstants.CompletionThresholdPercent
-            ? VideoWatchStatus.Completed
-            : VideoWatchStatus.InProgress;
-    }
+        => VideoWatchRules.Compute(totalWatchSeconds, durationSeconds);
 
     /// <summary>
     /// Resolves the teacher's subject display name, replicating the canonical
@@ -1415,6 +1528,25 @@ public sealed class VideoService : IVideoService
     /// Per Phase 5 Q2(a): keep the bang here rather than restructuring the
     /// shared interface in this PR.
     /// </summary>
+    /// <summary>
+    /// Tells the scoped students a video is (or will become) available.
+    ///
+    /// Best-effort and deliberately swallowed: publishing must never fail because a
+    /// queue was unreachable. Enqueue only — the fan-out itself runs on Hangfire, so
+    /// the teacher never waits on it, and the job re-checks visibility before sending.
+    /// </summary>
+    private void AnnounceVideoPublished(long teacherId, long videoAssetId, DateTime? publishDate)
+    {
+        try
+        {
+            _publishNotifications.DispatchVideoPublished(teacherId, videoAssetId, publishDate);
+        }
+        catch (Exception)
+        {
+            // Intentionally ignored — the video is published either way.
+        }
+    }
+
     private async Task<Result<T>?> CheckModuleActiveAsync<T>(long teacherId)
     {
         bool active = await _unitOfWork.ModuleTeacherRepo!
@@ -2165,6 +2297,11 @@ public sealed class VideoService : IVideoService
                 await _unitOfWork.RollbackAsync();
             throw;
         }
+
+        // Post-commit: a video created straight into Published is new content to its
+        // students exactly like one toggled later, so it announces the same way.
+        if (video.Status == VideoStatus.Published)
+            AnnounceVideoPublished(teacherId, video.Id, video.PublishDate);
 
         return Result<CreateVideoResponse>.Success(
                    new CreateVideoResponse

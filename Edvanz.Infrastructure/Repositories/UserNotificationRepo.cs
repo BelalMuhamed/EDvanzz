@@ -2,6 +2,7 @@
 using Edvanz.Domain.Interfaces;
 using Edvanz.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Edvanz.Domain.Enums;
 
 namespace Edvanz.Infrastructure.Repositories;
 
@@ -63,6 +64,21 @@ public class UserNotificationRepo
     public async Task InsertNotificationAsync(UserNotification notification)
     {
         await _context.Set<UserNotification>().AddAsync(notification);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<long>> GetUserIdsAlreadyNotifiedAsync(
+        NotificationSourceType sourceType, long sourceEntityId, IReadOnlyCollection<long> userIds)
+    {
+        if (userIds is null || userIds.Count == 0) return Array.Empty<long>();
+
+        return await _context.Set<UserNotification>()
+            .Where(n => n.SourceType == sourceType
+                     && n.SourceEntityId == sourceEntityId
+                     && userIds.Contains(n.UserId))
+            .Select(n => n.UserId)
+            .Distinct()
+            .ToListAsync();
     }
 
     // ══════════════════════════════════════════════

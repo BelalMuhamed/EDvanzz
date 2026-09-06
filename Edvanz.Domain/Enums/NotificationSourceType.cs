@@ -10,5 +10,15 @@ public enum NotificationSourceType : byte
 {
     Renewal = 1,
     PaymentRejected = 2,
-    CapacityResolved = 3
+    CapacityResolved = 3,
+
+    /// <summary>
+    /// A video became visible to a student. Unlike the three above, this one
+    /// fans OUT — one row per recipient for the same video — which is why the
+    /// idempotency index carries UserId as well.
+    /// </summary>
+    VideoPublished = 4,
+
+    /// <summary>An online exam was published to a student. Fans out like <see cref="VideoPublished"/>.</summary>
+    OnlineExamPublished = 5
 }

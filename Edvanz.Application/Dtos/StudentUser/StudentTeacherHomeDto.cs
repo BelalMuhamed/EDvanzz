@@ -164,6 +164,13 @@ public class HomeVideosDto
 
     /// <summary>Number of videos currently visible to this student under this teacher.</summary>
     public int Count { get; set; }
+
+    /// <summary>
+    /// Of <see cref="Count"/>, how many this student has never opened — the tile's "new" badge.
+    /// The tile carried a bare total before, so it read the same on every visit and gave a
+    /// student no reason to look again. Additive; an older build ignores it.
+    /// </summary>
+    public int NotStartedCount { get; set; }
 }
 
 /// <summary>Homework — Upcoming-Homework card + Homework quick-tile count.</summary>

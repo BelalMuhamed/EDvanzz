@@ -104,7 +104,8 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
     /// <inheritdoc />
     /// <inheritdoc />
     public async Task<(IReadOnlyList<TeacherVideoListRow> Items, int TotalCount)>
-        GetVideosInUnitPagedAsync(long unitId, long teacherId, string? search, int page, int pageSize)
+        GetVideosInUnitPagedAsync(long unitId, long teacherId, string? search, int page, int pageSize,
+            VideoStatus? status = null)
     {
         var query = _context.VideoAssets
             .Where(v => v.TeacherId == teacherId
@@ -115,6 +116,13 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
         {
             string pattern = $"%{ArabicTextNormalizer.Normalize(search.Trim())}%";
             query = query.Where(v => EF.Functions.Like(DbSearch.ArabicNormalize(v.Title), pattern));
+        }
+
+        // Optional publish-state filter (Draft / Published). Null keeps both,
+        // which is the behaviour every existing caller relies on.
+        if (status.HasValue)
+        {
+            query = query.Where(v => v.Status == status.Value);
         }
 
         int totalCount = await query.CountAsync();

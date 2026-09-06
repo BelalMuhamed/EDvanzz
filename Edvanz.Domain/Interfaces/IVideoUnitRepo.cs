@@ -1,4 +1,5 @@
 using Edvanz.Domain.Entities;
+using Edvanz.Domain.Enums;
 
 namespace Edvanz.Domain.Interfaces;
 
@@ -53,7 +54,8 @@ public interface IVideoUnitRepo : IGenericRepo<VideoUnit, long>
     /// teacher video list — the only difference is the unit filter.
     /// </summary>
     Task<(IReadOnlyList<TeacherVideoListRow> Items, int TotalCount)>
-        GetVideosInUnitPagedAsync(long unitId, long teacherId, string? search, int page, int pageSize);
+        GetVideosInUnitPagedAsync(long unitId, long teacherId, string? search, int page, int pageSize,
+            VideoStatus? status = null);
 
     // ══════════════════════════════════════════════════════════════════════
     // UNIT SCOPE — collection-level Target Scope (final decision)

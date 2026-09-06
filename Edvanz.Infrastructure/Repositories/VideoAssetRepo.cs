@@ -254,7 +254,8 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
 
     /// <inheritdoc />
     public async Task<(IReadOnlyList<TeacherVideoListRow> Items, int TotalCount)>
-        GetTeacherVideosPagedAsync(long teacherId, string? search, int page, int pageSize)
+        GetTeacherVideosPagedAsync(long teacherId, string? search, int page, int pageSize,
+            VideoStatus? status = null)
     {
         // Backed by IX_VideoAssets_TeacherId_CreatedAt (newest first).
         var query = _context.VideoAssets
@@ -264,6 +265,13 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
         {
             string pattern = $"%{ArabicTextNormalizer.Normalize(search.Trim())}%";
             query = query.Where(v => EF.Functions.Like(DbSearch.ArabicNormalize(v.Title), pattern));
+        }
+
+        // Optional publish-state filter (Draft / Published). Null keeps both,
+        // which is the behaviour every existing caller relies on.
+        if (status.HasValue)
+        {
+            query = query.Where(v => v.Status == status.Value);
         }
 
         int totalCount = await query.CountAsync();
@@ -374,8 +382,10 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
     /// <inheritdoc />
     public Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentInUnitAsync(
-            long teacherId, long teacherStudentId, long unitId, int page, int pageSize)
-        => GetStudentVisibleVideosPagedAsync(teacherId, teacherStudentId, unitId, page, pageSize);
+            long teacherId, long teacherStudentId, long unitId, int page, int pageSize,
+            string? search = null, bool unwatchedOnly = false)
+        => GetStudentVisibleVideosPagedAsync(
+            teacherId, teacherStudentId, unitId, page, pageSize, search, unwatchedOnly);
 
     /// <summary>
     /// Shared visible-videos query for the student list (V2/V4 enriched) and the V3 unit
@@ -384,7 +394,8 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
     /// </summary>
     private async Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetStudentVisibleVideosPagedAsync(
-            long teacherId, long teacherStudentId, long? unitId, int page, int pageSize)
+            long teacherId, long teacherStudentId, long? unitId, int page, int pageSize,
+            string? search = null, bool unwatchedOnly = false)
     {
         // Story B Q1 — implements the spec's scope union with analytics LEFT JOIN. Hot path;
         // covered by the filtered scope-target indexes on VideoScopes plus
@@ -436,6 +447,29 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             scopeQuery = scopeQuery.Where(s => unitVideoIds.Contains(s.VideoAssetId));
         }
 
+        // Title search, same Arabic-normalized LIKE the teacher's list uses so
+        // both sides match the same way on the same text.
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            string pattern = $"%{ArabicTextNormalizer.Normalize(search.Trim())}%";
+            var matchingIds = _context.VideoAssets
+                .Where(v => v.TeacherId == teacherId
+                         && EF.Functions.Like(DbSearch.ArabicNormalize(v.Title), pattern))
+                .Select(v => v.Id);
+            scopeQuery = scopeQuery.Where(s => matchingIds.Contains(s.VideoAssetId));
+        }
+
+        // "Not watched yet" — the same rule the row badge uses (zero watch
+        // seconds, whether or not an analytics row exists), so filtering by it
+        // returns exactly the rows the student sees marked that way.
+        if (unwatchedOnly)
+        {
+            scopeQuery = scopeQuery.Where(s =>
+                !_context.VideoAnalytics.Any(an => an.VideoAssetId == s.VideoAssetId
+                                                && an.TeacherStudentId == teacherStudentId
+                                                && an.TotalWatchSeconds > 0));
+        }
+
         var visibleQuery = scopeQuery
             .GroupBy(s => s.VideoAssetId)
             .Select(g => new
@@ -444,7 +478,8 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
                 AssignedAt = g.Min(s => s.AssignedAt)
             });
 
-        // Total before pagination — needed for PaginatedResponse.
+        // Total before pagination — needed for PaginatedResponse. Filters above
+        // are already applied, so the total always describes the rows returned.
         int totalCount = await visibleQuery.CountAsync();
 
         // Final projection: join the visible-set onto VideoAssets and LEFT JOIN VideoAnalytics
@@ -587,6 +622,7 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             from vau in _context.VideoAssetUnits
             where visibleVideoIds.Contains(vau.VideoAssetId)
             join u in _context.VideoUnits on vau.UnitId equals u.Id
+            join asset in _context.VideoAssets on vau.VideoAssetId equals asset.Id
             where u.TeacherId == teacherId
             select new
             {
@@ -594,7 +630,19 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
                 u.Title,
                 u.Description,
                 vau.VideoAssetId,
-                HasQuiz = _context.VideoExams.Any(e => e.VideoAssetId == vau.VideoAssetId)
+                HasQuiz = _context.VideoExams.Any(e => e.VideoAssetId == vau.VideoAssetId),
+                // Duration comes off the joined asset — a correlated subquery here
+                // would be one extra APPLY per (unit, video) row on a hot student
+                // path. Watch seconds stay a typed nullable subquery (there may be
+                // no analytics row); kept nullable and coalesced in memory, because
+                // a bare null branch against a subquery has no type mapping and
+                // breaks query compilation (BUG-7).
+                DurationSeconds = asset.DurationSeconds,
+                WatchSeconds = _context.VideoAnalytics
+                    .Where(an => an.VideoAssetId == vau.VideoAssetId
+                              && an.TeacherStudentId == teacherStudentId)
+                    .Select(an => (long?)an.TotalWatchSeconds)
+                    .FirstOrDefault(),
             })
             .AsNoTracking()
             .ToListAsync();
@@ -608,10 +656,25 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
                 Description = g.Key.Description,
                 VideoCount = g.Select(x => x.VideoAssetId).Distinct().Count(),
                 QuizVideoCount = g.Where(x => x.HasQuiz).Select(x => x.VideoAssetId).Distinct().Count(),
+                // Distinct FIRST: a video linked to the unit twice would
+                // otherwise count twice here while VideoCount counted it once,
+                // and the unit could read "3 of 2 watched".
+                WatchedVideoCount = g
+                    .GroupBy(x => x.VideoAssetId)
+                    .Count(vg => VideoWatchRules.IsWatched(
+                        vg.First().WatchSeconds ?? 0,
+                        vg.First().DurationSeconds)),
             })
             .OrderBy(u => u.Title)
             .ToList();
     }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<long>> GetAudienceTeacherStudentIdsAsync(
+        long teacherId, long videoAssetId)
+        => await GetResolvedStudentIdsForVideoQuery(teacherId, videoAssetId)
+            .Distinct()
+            .ToListAsync();
 
     /// <inheritdoc />
     public async Task<TeacherSubjectInfo?> GetTeacherSubjectAsync(long teacherId)

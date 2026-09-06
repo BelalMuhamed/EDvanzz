@@ -91,6 +91,20 @@ public interface IOnlineExamRepo : IGenericRepo<OnlineExam, long>
     /// <summary>Student-facing: dedicated projection with no IsCorrect field on the shape at all (S2).</summary>
     Task<IReadOnlyList<StudentOnlineExamQuestionRow>> GetQuestionsForStudentAsync(long onlineExamId);
 
+    /// <summary>
+    /// Per-question outcome counts across FINALIZED attempts, plus how often each
+    /// wrong option was picked. Two grouped aggregates, not one row per answer —
+    /// the caller stitches them by QuestionId.
+    ///
+    /// Scoped to the exam only; the CALLER must have already proved the exam
+    /// belongs to the tenant (GetByIdAndTeacherAsync), exactly as the other
+    /// analysis reads on this repo do.
+    /// </summary>
+    Task<(IReadOnlyList<OnlineExamQuestionStatRow> Stats,
+          IReadOnlyList<OnlineExamWrongOptionRow> WrongOptions,
+          int FinalizedReportCount)>
+        GetQuestionAnalysisAsync(long onlineExamId);
+
     /// <summary>Sum of Question.Degree — the exam's live-computed total grade (never stored, do-not-reintroduce #6).</summary>
     Task<decimal> GetTotalDegreeAsync(long onlineExamId);
 

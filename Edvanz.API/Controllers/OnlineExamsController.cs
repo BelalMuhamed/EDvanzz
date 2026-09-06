@@ -178,6 +178,55 @@ public sealed class OnlineExamsController : ModuleSixApiBaseController
         return ToResponse(await _service.GetQuestionsAsync(teacherId.Value, onlineExamId));
     }
 
+    /// <summary>
+    /// T15 — Per-question difficulty across finalized attempts, hardest first, each with the wrong
+    /// option the class picked most. The exam analytics could say the class averaged 62% but never
+    /// which questions caused it.
+    /// </summary>
+    /// <param name="onlineExamId">The exam to analyze.</param>
+    /// <response code="200">Analysis returned. Empty question list when nobody has submitted yet.</response>
+    /// <response code="404">Exam not found or not owned by the caller's tenant.</response>
+    /// <response code="401">Caller is not authenticated.</response>
+    /// <response code="403">Caller lacks the <c>OnlineExam.View</c> permission.</response>
+    [HttpGet("{onlineExamId:long}/question-analysis")]
+    [ModulePermission(OnlineExamConstants.ModuleName, OnlineExamConstants.PermissionView)]
+    [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.OnlineExamQuestionAnalysisDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetQuestionAnalysis([FromRoute] long onlineExamId)
+    {
+        long? teacherId = await ResolveTeacherIdAsync();
+        if (teacherId is null) return TeacherNotResolved();
+        return ToResponse(await _service.GetQuestionAnalysisAsync(teacherId.Value, onlineExamId));
+    }
+
+    /// <summary>
+    /// T16 — One student's answer sheet. Same shape the student's own review returns, with correct
+    /// answers always marked (the teacher owns the exam) and the student's selections overlaid.
+    /// Previously the teacher could see a score and nothing behind it.
+    /// </summary>
+    /// <param name="onlineExamId">The exam.</param>
+    /// <param name="teacherStudentId">The student whose sheet is requested.</param>
+    /// <response code="200">Answer sheet returned.</response>
+    /// <response code="404">Exam not found, or the student has no attempt at it.</response>
+    /// <response code="403">The student does not belong to the caller's tenant, or the caller lacks <c>OnlineExam.View</c>.</response>
+    /// <response code="401">Caller is not authenticated.</response>
+    [HttpGet("{onlineExamId:long}/students/{teacherStudentId:long}/answers")]
+    [ModulePermission(OnlineExamConstants.ModuleName, OnlineExamConstants.PermissionView)]
+    [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.OnlineExamReviewDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetStudentAnswerSheet(
+        [FromRoute] long onlineExamId, [FromRoute] long teacherStudentId)
+    {
+        long? teacherId = await ResolveTeacherIdAsync();
+        if (teacherId is null) return TeacherNotResolved();
+        return ToResponse(await _service.GetStudentAnswerSheetAsync(
+            teacherId.Value, onlineExamId, teacherStudentId));
+    }
+
     /// <summary>T10 — Lightweight question-type counts (single-choice / multiple-choice) plus current status.</summary>
     /// <param name="onlineExamId">The exam to summarize.</param>
     /// <response code="200">Counts returned.</response>

@@ -144,6 +144,9 @@ public static class ServicesCollectionExtensions
         // so each job execution gets a fresh DbContext.
         services.AddScoped<IChatService, ChatService>();
         services.AddScoped<IChatPushJob, ChatPushJob>();
+        // Content-publish announcements (video / online exam). The JOB lives here;
+        // its dispatcher is registered in Infrastructure, which owns Hangfire.
+        services.AddScoped<IContentPublishNotificationJob, ContentPublishNotificationJob>();
         services.AddScoped<ISubscriptionReminderJob, SubscriptionReminderJob>();
         services.AddScoped<IRenewalNotificationJob, RenewalNotificationJob>();
         services.AddScoped<IPendingPaymentRejectedNotificationJob, PendingPaymentRejectedNotificationJob>();

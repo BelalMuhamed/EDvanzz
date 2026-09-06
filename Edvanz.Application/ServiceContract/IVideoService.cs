@@ -191,6 +191,15 @@ public interface IVideoService
     /// (videos + how many carry a quiz) and the teacher's subject. Runs the runtime
     /// module-active gate. Batched, no N+1.
     /// </summary>
+    /// <summary>
+    /// Module-gated scalar rollup for the student home's Videos tile — total visible videos and
+    /// how many are still unopened. Two COUNTs over the same visible-video predicate the student's
+    /// own list uses, so the tile can never disagree with the list; deliberately cheaper than
+    /// asking for a page of rows just to read its total.
+    /// </summary>
+    Task<Result<StudentVideoProgressDto>> GetStudentVideoProgressAsync(
+        long teacherId, long teacherStudentId);
+
     Task<Result<List<StudentVideoUnitDto>>> GetStudentUnitsAsync(
         long teacherId, long teacherStudentId, string? studentLanguage);
 

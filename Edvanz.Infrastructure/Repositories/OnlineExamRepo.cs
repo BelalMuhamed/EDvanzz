@@ -483,4 +483,70 @@ public class OnlineExamRepo : GenericRepo<OnlineExam, long>, IOnlineExamRepo
             .AsNoTracking()
             .FirstOrDefaultAsync();
     }
+
+    /// <inheritdoc />
+    public async Task<(IReadOnlyList<OnlineExamQuestionStatRow> Stats,
+                       IReadOnlyList<OnlineExamWrongOptionRow> WrongOptions,
+                       int FinalizedReportCount)>
+        GetQuestionAnalysisAsync(long onlineExamId)
+    {
+        // Finalized attempts only — a report still open can change its answers,
+        // and a difficulty figure that shifts mid-exam misleads the teacher.
+        var finalizedReportIds = _context.StudentOnlineExamReports
+            .Where(r => r.OnlineExamId == onlineExamId && r.SubmittedAt != null)
+            .Select(r => r.Id);
+
+        int finalizedCount = await finalizedReportIds.CountAsync();
+        if (finalizedCount == 0)
+        {
+            return (Array.Empty<OnlineExamQuestionStatRow>(),
+                    Array.Empty<OnlineExamWrongOptionRow>(),
+                    0);
+        }
+
+        // An answer row with no selected option is a question the student
+        // opened but left blank — not an attempt at it.
+        var answered = _context.StudentQuestionAnswers
+            .Where(a => finalizedReportIds.Contains(a.StudentReportId)
+                     && a.Question.OnlineExamId == onlineExamId
+                     && a.SelectedOptions.Any());
+
+        var stats = await answered
+            .GroupBy(a => a.QuestionId)
+            .Select(g => new OnlineExamQuestionStatRow
+            {
+                QuestionId = g.Key,
+                AttemptedCount = g.Count(),
+                // Full marks = correct. Multiple-choice awards partial credit,
+                // and a half-right answer is not a right one.
+                CorrectCount = g.Count(a => a.AwardedDegree >= a.Question.Degree),
+            })
+            .AsNoTracking()
+            .ToListAsync();
+
+        // Joined, not a correlated EXISTS: `answered` is itself a filtered query,
+        // and an EXISTS would re-evaluate it once per selected-option row.
+        var wrongOptions = await (
+            from o in _context.StudentQuestionAnswerOptions
+            join a in answered on o.StudentQuestionAnswerId equals a.Id
+            where !o.QuestionOption.IsCorrect
+            select new { a.QuestionId, o.QuestionOptionId, o.QuestionOption.OptionText })
+            .GroupBy(x => new
+            {
+                x.QuestionId,
+                OptionId = x.QuestionOptionId,
+                x.OptionText,
+            })
+            .Select(g => new OnlineExamWrongOptionRow
+            {
+                QuestionId = g.Key.QuestionId,
+                OptionId = g.Key.OptionId,
+                OptionText = g.Key.OptionText,
+                PickedCount = g.Count(),
+            })
+            .AsNoTracking()
+            .ToListAsync();
+
+        return (stats, wrongOptions, finalizedCount);
+    }
 }

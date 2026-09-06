@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using System.Globalization;
 using System.Net;
+using Edvanz.Application.IservicesContract;
 
 namespace Edvanz.Application.Services;
 
@@ -19,11 +20,13 @@ public class OnlineExamService : IOnlineExamService
     private readonly IStringLocalizer<Messages> _localizer;
     private readonly IOnlineExamGradingService _grading;
     private readonly IFileAccessService _fileAccess;
+    private readonly IContentPublishNotificationDispatcher _publishNotifications;
     private readonly ISubscriptionGateService _subscriptionGate;
 
     public OnlineExamService(
         IUnitOfWork unitOfWork, IOnlineExamScopeResolver scopeResolver, IStringLocalizer<Messages> localizer,
         IOnlineExamGradingService grading, IFileAccessService fileAccess,
+        IContentPublishNotificationDispatcher publishNotifications,
         ISubscriptionGateService subscriptionGate)
     {
         _unitOfWork = unitOfWork;
@@ -31,6 +34,7 @@ public class OnlineExamService : IOnlineExamService
         _localizer = localizer;
         _grading = grading;
         _fileAccess = fileAccess;
+        _publishNotifications = publishNotifications;
         _subscriptionGate = subscriptionGate;
     }
 
@@ -366,6 +370,153 @@ public class OnlineExamService : IOnlineExamService
     // ══════════════════════════════════════════════════════════════════════
     // T7 — SCOPE ANALYSIS GRID (§3.2 reconciliation, case-3 flagged)
     // ══════════════════════════════════════════════════════════════════════
+    /// <inheritdoc />
+    public async Task<Result<OnlineExamQuestionAnalysisDto>> GetQuestionAnalysisAsync(
+        long teacherId, long onlineExamId)
+    {
+        var exam = await _unitOfWork.OnlineExamsRepo.GetByIdAndTeacherAsync(onlineExamId, teacherId);
+        if (exam is null)
+            return Result<OnlineExamQuestionAnalysisDto>.Failure(
+                _localizer, OnlineExamConstants.Messages.NotFound, HttpStatusCode.NotFound);
+
+        var questions = await _unitOfWork.OnlineExamsRepo.GetQuestionsForTeacherAsync(onlineExamId);
+        var (stats, wrongOptions, finalizedCount) = await _unitOfWork.OnlineExamsRepo
+            .GetQuestionAnalysisAsync(onlineExamId);
+
+        var statByQuestion = stats.ToDictionary(r => r.QuestionId);
+
+        // Keep only the single most-picked wrong option per question; ties break
+        // on the lower option id so repeated calls return a stable answer.
+        var topWrongByQuestion = wrongOptions
+            .GroupBy(w => w.QuestionId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(w => w.PickedCount).ThenBy(w => w.OptionId).First());
+
+        var rows = new List<OnlineExamQuestionAnalysisRowDto>(questions.Count);
+        int order = 0;
+        foreach (var question in questions)
+        {
+            order++;
+            statByQuestion.TryGetValue(question.Id, out var stat);
+            int attempted = stat?.AttemptedCount ?? 0;
+            int correct = stat?.CorrectCount ?? 0;
+
+            var row = new OnlineExamQuestionAnalysisRowDto
+            {
+                QuestionId = question.Id,
+                QuestionText = question.QuestionText,
+                Degree = question.Degree,
+                Order = order,
+                AttemptedCount = attempted,
+                CorrectCount = correct,
+                SkippedCount = finalizedCount > attempted ? finalizedCount - attempted : 0,
+                CorrectPercentage = attempted == 0
+                    ? null
+                    : Math.Round((decimal)correct / attempted * 100m, 1),
+            };
+
+            if (topWrongByQuestion.TryGetValue(question.Id, out var wrong))
+            {
+                row.TopWrongOptionText = wrong.OptionText;
+                row.TopWrongOptionCount = wrong.PickedCount;
+            }
+
+            rows.Add(row);
+        }
+
+        // Hardest first — that is the whole point of the screen. Unattempted
+        // questions (null percentage) sort last: they say nothing about
+        // difficulty, and burying real problems under them would defeat it.
+        var dto = new OnlineExamQuestionAnalysisDto
+        {
+            FinalizedAttempts = finalizedCount,
+            Questions = rows
+                .OrderBy(r => r.CorrectPercentage.HasValue ? 0 : 1)
+                .ThenBy(r => r.CorrectPercentage ?? 0)
+                .ThenBy(r => r.Order)
+                .ToList(),
+        };
+
+        return Result<OnlineExamQuestionAnalysisDto>.Success(dto, _localizer);
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<OnlineExamReviewDto>> GetStudentAnswerSheetAsync(
+        long teacherId, long onlineExamId, long teacherStudentId)
+    {
+        var exam = await _unitOfWork.OnlineExamsRepo.GetByIdAndTeacherAsync(onlineExamId, teacherId);
+        if (exam is null)
+            return Result<OnlineExamReviewDto>.Failure(
+                _localizer, OnlineExamConstants.Messages.NotFound, HttpStatusCode.NotFound);
+
+        // The student id comes from the client — re-prove it belongs to this
+        // tenant before reading anything about them (§3.3 generalized).
+        if (!await _unitOfWork.OnlineExamsRepo.IsTeacherStudentOwnedByTeacherAsync(teacherStudentId, teacherId))
+            return Result<OnlineExamReviewDto>.Failure(
+                _localizer, OnlineExamConstants.Messages.StudentNotOwned, HttpStatusCode.Forbidden);
+
+        var report = await _unitOfWork.StudentOnlineExamReportsRepo
+            .GetReportWithAnswersAsync(onlineExamId, teacherStudentId);
+        if (report is null)
+            return Result<OnlineExamReviewDto>.Failure(
+                _localizer, OnlineExamConstants.Messages.ReportNotFound, HttpStatusCode.NotFound);
+
+        var questions = await _unitOfWork.OnlineExamsRepo.GetQuestionsForTeacherAsync(onlineExamId);
+
+        // One query for every question image, never one per question.
+        var imageUrls = await _fileAccess.TryBuildGatedUrlsAsync(
+            questions.Where(q => q.ImageFileInternalId is not null)
+                     .Select(q => q.ImageFileInternalId!.Value));
+
+        var answersByQuestion = report.Answers.ToDictionary(a => a.QuestionId);
+        bool finalized = report.SubmittedAt is not null;
+
+        var dto = new OnlineExamReviewDto
+        {
+            ExamId = exam.Id,
+            ExamName = exam.Title,
+            Finalized = finalized,
+            ReportStatus = report.Status.ToString(),
+            // Score only means something once graded; showing a running total
+            // for an open attempt would read as a final mark.
+            Score = finalized ? report.Score : null,
+            Percentage = finalized ? report.Percentage : null,
+            StudentName = report.TeacherStudent?.StudentName,
+            StudentCode = report.TeacherStudent?.StudentCode,
+            Questions = questions.Select(q =>
+            {
+                answersByQuestion.TryGetValue(q.Id, out var answer);
+                var selectedIds = answer?.SelectedOptions
+                    .Select(o => o.QuestionOptionId).ToHashSet() ?? new HashSet<long>();
+
+                return new OnlineExamReviewQuestionDto
+                {
+                    QuestionId = q.Id,
+                    QuestionText = q.QuestionText,
+                    QuestionType = q.QuestionType,
+                    Degree = q.Degree,
+                    AwardedDegree = answer?.AwardedDegree,
+                    ImageUrl = q.ImageFileInternalId is long fid
+                        ? imageUrls.GetValueOrDefault(fid)
+                        : null,
+                    Options = q.Options.Select(o => new OnlineExamReviewOptionDto
+                    {
+                        OptionId = o.Id,
+                        OptionText = o.OptionText,
+                        IsSelected = selectedIds.Contains(o.Id),
+                        // Always marked: the teacher owns the exam. The
+                        // student-facing projection withholds this until
+                        // finalize; that rule protects students, not teachers.
+                        IsCorrect = o.IsCorrect,
+                    }).ToList(),
+                };
+            }).ToList(),
+        };
+
+        return Result<OnlineExamReviewDto>.Success(dto, _localizer);
+    }
+
     public async Task<Result<List<OnlineExamScopeAnalysisRowDto>>> GetScopeAnalysisAsync(long teacherId, long onlineExamId)
     {
         var exam = await _unitOfWork.OnlineExamsRepo.GetByIdAndTeacherAsync(onlineExamId, teacherId);
@@ -582,6 +733,11 @@ public class OnlineExamService : IOnlineExamService
                 return Result<OnlineExamStatusUpdatedDto>.Failure(_localizer, OnlineExamConstants.Messages.PublishRequiresQuestionAndScope, HttpStatusCode.BadRequest);
         }
 
+        // Captured before the assignment: only Draft→Published announces. A
+        // re-publish after an unpublish stays silent (and the per-recipient
+        // dedupe would stop a repeat regardless).
+        bool wasPublished = exam.Status == OnlineExamStatus.Published;
+
         exam.Status = request.Status;
         exam.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.OnlineExamsRepo.UpdateAsync(exam);
@@ -593,6 +749,20 @@ public class OnlineExamService : IOnlineExamService
         catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
         {
             return Result<OnlineExamStatusUpdatedDto>.Failure(_localizer, OnlineExamConstants.Messages.ConcurrencyConflict, HttpStatusCode.Conflict);
+        }
+
+        // Post-save, best-effort: an exam students cannot be told about is still a
+        // published exam, so a queue failure must not fail the publish.
+        if (!wasPublished && request.Status == OnlineExamStatus.Published)
+        {
+            try
+            {
+                _publishNotifications.DispatchOnlineExamPublished(teacherId, onlineExamId);
+            }
+            catch (Exception)
+            {
+                // Intentionally ignored — the exam is published either way.
+            }
         }
 
         // No cast — request.Status is already OnlineExamStatus, matches the switch arms directly.

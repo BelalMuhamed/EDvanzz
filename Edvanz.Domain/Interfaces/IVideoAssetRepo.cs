@@ -143,7 +143,8 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
             long teacherId,
             string? search,
             int page,
-            int pageSize);
+            int pageSize,
+            VideoStatus? status = null);
 
     /// <summary>
     /// Paged list of videos visible to a specific student. Story B endpoint
@@ -171,13 +172,21 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// restricted to videos linked to <paramref name="unitId"/> (V3 unit drill-down). Shares one
     /// query path with the un-filtered list so the two never disagree. Batched (no N+1).
     /// </summary>
+    /// <param name="search">Optional title filter, Arabic-normalized like the teacher's list.</param>
+    /// <param name="unwatchedOnly">
+    /// When true, keeps only videos with no watch time — the same rule behind the row's
+    /// "Not started" badge, so the filter and the badge always agree. Applied before the
+    /// count, so the total describes the filtered set.
+    /// </param>
     Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentInUnitAsync(
             long teacherId,
             long teacherStudentId,
             long unitId,
             int page,
-            int pageSize);
+            int pageSize,
+            string? search = null,
+            bool unwatchedOnly = false);
 
     /// <summary>
     /// The units (V3) a student can see under a teacher — those containing at least one video
@@ -205,6 +214,13 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// <c>StudentUserService</c> pattern). One lookup per list, never per row. Null if the
     /// teacher does not exist.
     /// </summary>
+    /// <summary>
+    /// The roster ids a video is scoped to — the SAME resolved audience the analytics
+    /// report and the teacher list's per-video counts use, so a publish notification can
+    /// never reach someone the video does not actually target.
+    /// </summary>
+    Task<IReadOnlyList<long>> GetAudienceTeacherStudentIdsAsync(long teacherId, long videoAssetId);
+
     Task<TeacherSubjectInfo?> GetTeacherSubjectAsync(long teacherId);
 
     /// <summary>

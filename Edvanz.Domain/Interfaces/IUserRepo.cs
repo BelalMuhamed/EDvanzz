@@ -354,6 +354,17 @@ namespace Edvanz.Domain.Interfaces
         /// Finds an active link between a specific student and teacher.
         /// Used by UnlinkTeacherAsync.
         /// </summary>
+        /// <summary>
+        /// The app-account <c>User.Id</c>s behind a set of roster ids, for one teacher.
+        ///
+        /// Only ACTIVE links that are BOUND to a roster record count — the three axes are
+        /// separate (§7.2b), and a merely-connected account sees nothing, so notifying it
+        /// about a video it cannot open would be worse than silence. Deduplicated; empty
+        /// input returns empty without touching the database.
+        /// </summary>
+        Task<IReadOnlyList<long>> GetLinkedStudentUserIdsAsync(
+            long teacherId, IReadOnlyCollection<long> teacherStudentIds);
+
         Task<StudentTeacherLink?> GetActiveStudentTeacherLinkAsync(long studentUserId, long teacherId);
 
         /// <summary>
@@ -921,6 +932,15 @@ namespace Edvanz.Domain.Interfaces
         /// Used by <c>ChatPushJob</c> to render the push title under the recipient's culture (🔴-2).
         /// </summary>
         Task<string?> GetUserLanguagePreferenceByUserIdAsync(long userId);
+
+        /// <summary>
+        /// Batched <c>LanguagePreference</c> lookup for STUDENT accounts, keyed by
+        /// <c>User.Id</c>. The per-user overload above would be an N+1 inside a fan-out
+        /// to a whole session. Users with no student row are simply absent from the
+        /// dictionary; callers fall back to English.
+        /// </summary>
+        Task<IReadOnlyDictionary<long, string?>> GetStudentLanguagePreferencesAsync(
+            IReadOnlyCollection<long> userIds);
 
         // ══════════════════════════════════════════════
         // STUDENT ACCOUNTS — SUPER-ADMIN PAGINATED LIST

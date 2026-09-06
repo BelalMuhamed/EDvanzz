@@ -564,6 +564,23 @@ namespace Edvanz.Infrastructure.Repositories
         }
 
         /// <inheritdoc />
+        public async Task<IReadOnlyList<long>> GetLinkedStudentUserIdsAsync(
+            long teacherId, IReadOnlyCollection<long> teacherStudentIds)
+        {
+            if (teacherStudentIds is null || teacherStudentIds.Count == 0)
+                return Array.Empty<long>();
+
+            return await _context.Set<StudentTeacherLink>()
+                .Where(l => l.TeacherId == teacherId
+                         && l.LinkStatus == LinkStatus.Active
+                         && l.TeacherStudentId != null
+                         && teacherStudentIds.Contains(l.TeacherStudentId!.Value))
+                .Select(l => l.StudentUser.UserId)
+                .Distinct()
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
         public async Task<IReadOnlyList<StudentTeacherLink>> GetLiveLinksForStudentUserAsync(long studentUserId)
         {
             // Tracked (no AsNoTracking): the caller mutates each row's LinkStatus/UnlinkedAt
@@ -1538,6 +1555,27 @@ namespace Edvanz.Infrastructure.Repositories
                 .ToListAsync();
         }
         /// <inheritdoc />
+        /// <inheritdoc />
+        public async Task<IReadOnlyDictionary<long, string?>> GetStudentLanguagePreferencesAsync(
+            IReadOnlyCollection<long> userIds)
+        {
+            if (userIds is null || userIds.Count == 0)
+                return new Dictionary<long, string?>();
+
+            var rows = await _context.Set<StudentUser>()
+                .AsNoTracking()
+                .Where(s => userIds.Contains(s.UserId))
+                .Select(s => new { s.UserId, s.LanguagePreference })
+                .ToListAsync();
+
+            // A student account could in principle appear twice for one user; keep the
+            // first rather than throwing on a duplicate key inside a notification job.
+            var map = new Dictionary<long, string?>(rows.Count);
+            foreach (var row in rows)
+                map[row.UserId] = row.LanguagePreference;
+            return map;
+        }
+
         public async Task<string?> GetUserLanguagePreferenceByUserIdAsync(long userId)
         {
             // LanguagePreference is not on User — it lives on the role entity. Resolve the

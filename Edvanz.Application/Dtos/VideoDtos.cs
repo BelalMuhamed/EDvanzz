@@ -345,6 +345,22 @@ public sealed class VideoOverviewDto : VideoBaseDto
 
     /// <summary>Students whose completion meets <c>VideoConstants.CompletionThresholdPercent</c>.</summary>
     public int CompletedStudentCount { get; set; }
+
+    /// <summary>
+    /// Who this video is published to — its scope rows with resolved session /
+    /// group names and student counts. Reuses the unit screen's scope shape.
+    ///
+    /// "Who can see this?" is the question a teacher asks most often about a
+    /// published video, and answering it used to mean opening the Edit form on
+    /// live content. Empty when the video is scope-less. Additive.
+    /// </summary>
+    public List<VideoUnitScopeDto> Audience { get; set; } = new();
+
+    /// <summary>
+    /// Distinct active students reachable across <see cref="Audience"/> — a session
+    /// also covered by a scoped group is counted once, not twice.
+    /// </summary>
+    public int AudienceStudentCount { get; set; }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -590,6 +606,13 @@ public sealed class TeacherVideoListRequest
     }
 
     public string? Search { get; set; }
+
+    /// <summary>
+    /// Optional publish-state filter for the list. Null (the default) returns
+    /// Draft and Published alike, exactly as before. Serialized as a string.
+    /// </summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public VideoStatus? Status { get; set; }
 }
 
 /// <summary>
@@ -672,6 +695,15 @@ public sealed class StudentVideoListRequest
         get => _pageSize;
         set => _pageSize = value < 1 ? 20 : value > 100 ? 100 : value;
     }
+
+    /// <summary>Optional title search. Omitted/blank behaves exactly as before.</summary>
+    public string? Search { get; set; }
+
+    /// <summary>
+    /// When true, returns only videos the student has not started. Defaults to
+    /// false, so an older app build sees the unchanged full list.
+    /// </summary>
+    public bool UnwatchedOnly { get; set; }
 }
 
 /// <summary>
@@ -739,6 +771,26 @@ public sealed class StudentVideoListItemDto
 /// when it contains at least one video visible to the student (same predicate as the student
 /// video list, so the two never disagree).
 /// </summary>
+/// <summary>
+/// Scalar rollup behind the student home's Videos tile: how many videos this
+/// student can see, and how many of those they have never opened.
+///
+/// The tile used to read only a total, so "12 videos" looked identical whether
+/// eleven were new or none were, and a student had no reason to open the
+/// module after the first visit.
+/// </summary>
+public sealed class StudentVideoProgressDto
+{
+    /// <summary>Videos currently visible to this student under this teacher.</summary>
+    public int Total { get; set; }
+
+    /// <summary>Of <see cref="Total"/>, how many the student has opened at least once.</summary>
+    public int Seen { get; set; }
+
+    /// <summary>Of <see cref="Total"/>, how many have never been opened — the "new" badge.</summary>
+    public int NotStarted { get; set; }
+}
+
 public sealed class StudentVideoUnitDto
 {
     public long Id { get; set; }
@@ -750,6 +802,13 @@ public sealed class StudentVideoUnitDto
 
     /// <summary>Of <see cref="VideoCount"/>, how many carry a quiz.</summary>
     public int QuizCount { get; set; }
+
+    /// <summary>
+    /// Of <see cref="VideoCount"/>, how many this student has already watched
+    /// through. Additive field — an older app build simply ignores it and keeps
+    /// rendering the unit exactly as before.
+    /// </summary>
+    public int WatchedCount { get; set; }
 
     /// <summary>The owning teacher's subject (same resolution as the video list), empty if none.</summary>
     public string Subject { get; set; } = string.Empty;
