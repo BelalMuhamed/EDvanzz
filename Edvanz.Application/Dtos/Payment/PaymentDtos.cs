@@ -226,6 +226,16 @@ public class CustomAmountRepriceSummary
     /// frozen bill announces itself at the moment it diverges from the student's new price.
     /// </summary>
     public int KeptManual { get; set; }
+
+    /// <summary>
+    /// Bills skipped because money was already settled against them - cash collected or an amount
+    /// forgiven. That money is ground truth: re-pricing such a month below what was settled would close
+    /// it as Paid and swallow the surplus. Added 2026-09-09 alongside the guard itself; the SESSION
+    /// price change has reported this since 24d928f and the per-student change now matches it.
+    /// Additive - the shipped 4.0.0+17 client returns Future&lt;void&gt; from this call and never reads
+    /// the payload, so populating it cannot affect an existing build.
+    /// </summary>
+    public int KeptPaid { get; set; }
 }
 
 /// <summary>

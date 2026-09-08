@@ -382,11 +382,23 @@
             // AGREED debt from somewhere else that merely lives under this SessionId, not a bill this
             // session generated (�7.4/�7.4b treat it as untouchable everywhere else).
             return await _context.PaymentPeriods
+                .AsNoTracking()
                 .Where(p => p.TeacherId == teacherId
                     && p.SessionId == sessionId
                     && p.TeacherStudentId != null
-                    && !p.IsCarriedForward
-                    && p.MovedFromSessionId == null
+                    // MOVED months ARE re-priced (2026-09-09, teacher-confirmed): a month carried over
+                    // by OnStudentMovedBetweenSessionsAsync is a real, month-shaped, still-unpaid
+                    // obligation now billed by THIS session, so it follows this session's price like
+                    // every other unpaid month. This also makes the two price-change paths agree - the
+                    // per-student path (GetRepriceableStudentPeriodsAsync) has always re-priced them.
+                    // A LEGACY COLLAPSED LUMP is the one exception and stays FROZEN: ConfirmTransferAsync
+                    // writes ONE row holding the whole outstanding balance, with PeriodStart == PeriodEnd
+                    // == the transfer day and NO MovedFromSessionId, so the months it stands for no
+                    // longer exist and cannot be re-derived. Re-pricing it to a single month's amount is
+                    // exactly what silently erased the rest of the debt. The discriminator is
+                    // "IsCarriedForward AND MovedFromSessionId IS NULL": every month-shaped carried row
+                    // carries MovedFromSessionId, only the lump does not.
+                    && !(p.IsCarriedForward && p.MovedFromSessionId == null)
                     && ((p.PeriodType == PeriodType.Monthly && p.PeriodStart >= monthlyFromMonthStart)
                         || (p.PeriodType != PeriodType.Monthly && p.PeriodStart >= perSessionFromDate))
                     && (p.PaymentStatus == PaymentStatus.Unpaid
@@ -404,15 +416,44 @@
         public async Task<List<PaymentPeriod>> GetRepriceableStudentPeriodsAsync(
             long teacherId, long teacherStudentId, DateTime fromMonthStart)
         {
-            // Tracked. Future, still-owed periods for one student (per-student price change).
+            // Still-owed periods for one student (per-student price change).
+            // A LEGACY COLLAPSED LUMP is excluded and stays FROZEN - identical rule to
+            // GetRepriceableSessionDefaultPeriodsAsync above, deliberately the same predicate so the
+            // two price-change paths can never drift apart again. Without it, a per-student price
+            // change rewrote the single row holding a transferred student's ENTIRE carried balance
+            // down to one month's amount and silently deleted the difference (2026-09-08 review).
+            // Month-shaped moved rows (MovedFromSessionId set) stay in scope and re-price per month.
             return await _context.PaymentPeriods
+                .AsNoTracking()
                 .Where(p => p.TeacherId == teacherId
                     && p.TeacherStudentId == teacherStudentId
                     && p.PeriodStart >= fromMonthStart
+                    && !(p.IsCarriedForward && p.MovedFromSessionId == null)
                     && (p.PaymentStatus == PaymentStatus.Unpaid
                         || p.PaymentStatus == PaymentStatus.PartiallyPaid))
                 .OrderBy(p => p.PeriodSequence)
                 .ToListAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> TryRepricePeriodAsync(long teacherId, long periodId, decimal newAmountDue)
+        {
+            // The money guard lives in the WHERE, not in a prior read, so "is it still untouched?" and
+            // "re-price it" are ONE statement and nothing can slip between them. A concurrent collect
+            // sets AmountPaid before this runs (it loses the race, 0 rows) or after (it re-reads and
+            // applies against the new AmountDue) - either way no payment is overwritten.
+            // ExecuteUpdate bypasses the change tracker, which is why the callers load these periods
+            // AsNoTracking: there is no tracked copy to go stale.
+            int affected = await _context.PaymentPeriods
+                .Where(p => p.Id == periodId
+                    && p.TeacherId == teacherId
+                    && p.AmountPaid == 0m
+                    && (p.ForgivenAmount ?? 0m) == 0m)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.AmountDue, newAmountDue)
+                    .SetProperty(p => p.PaymentStatus, PaymentStatus.Unpaid));
+
+            return affected > 0;
         }
 
         /// <inheritdoc />
@@ -1787,10 +1828,14 @@
                         .Where(p => p.TeacherId == teacherId && p.TeacherStudentId == ts.Id
                             && p.PeriodStart >= monthStart && p.PeriodStart <= monthEnd)
                         .Sum(p => (decimal?)p.AmountPaid) ?? 0m,
+                    // NET OF FORGIVEN, like the session header above it (monthAmount) and like the
+                    // tracking card. Forgiving reduces what the student owes, so a gross figure here
+                    // made the rows stop adding up to their own header the moment anything was
+                    // forgiven. UnpaidAmount below has always subtracted it.
                     AmountDue = _context.PaymentPeriods
                         .Where(p => p.TeacherId == teacherId && p.TeacherStudentId == ts.Id
                             && p.PeriodStart >= monthStart && p.PeriodStart <= monthEnd)
-                        .Sum(p => (decimal?)p.AmountDue) ?? 0m,
+                        .Sum(p => (decimal?)(p.AmountDue - (p.ForgivenAmount ?? 0m))) ?? 0m,
                     // Arrears THROUGH the selected month only (not the all-time counter): sum of
                     // (due - paid) and count of unpaid periods whose start is on/before month end.
                     UnpaidAmount = _context.PaymentPeriods
@@ -2773,7 +2818,10 @@
                     SessionName = g.Key.SessionName,
                     g.Key.SessionGroupId,
                     g.Key.SessionGroupName,
-                    Expected = g.Sum(p => p.AmountDue),
+                    // Expected is NET OF FORGIVEN so the per-session figures sum back to the tracking
+                    // card's Expected, which is Sum(AmountDue - ForgivenAmount). A gross Expected here
+                    // overstated every session the moment a teacher forgave anything.
+                    Expected = g.Sum(p => p.AmountDue - (p.ForgivenAmount ?? 0m)),
                     Collected = g.Sum(p => p.AmountPaid)
                 })
                 .OrderBy(r => r.SessionName)

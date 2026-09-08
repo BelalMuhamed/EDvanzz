@@ -962,13 +962,17 @@ public class PaymentService : IPaymentService
             counter.CustomPaymentAmount = dto.CustomAmount;
             await _unitOfWork.PaymentsRepo.UpdatePaymentCounterAsync(counter);
 
-            // Propagate a per-student price change to EVERY still-owed period — past arrears, the
-            // current month, and all future months — so the new amount is reflected immediately across
+            // Propagate a per-student price change to EVERY still-owed period - past arrears, the
+            // current month, and all future months - so the new amount is reflected immediately across
             // every screen (user-confirmed scope 2026-08-17: ALL unpaid periods, not just current +
-            // future). The repo predicate only selects Unpaid/PartiallyPaid periods, so fully-paid/
-            // overpaid months are never rewritten — what the student already settled at the old price
-            // stands. DateTime.MinValue = no lower month bound (this still reaches FURTHER BACK than the
-            // SESSION-amount change, OnSessionAmountChangedAsync, which starts at the current month).
+            // future). DateTime.MinValue = no lower month bound.
+            //
+            // A bill that already holds money is FROZEN, and that guard lives in the LOOP below, not
+            // here: the repo predicate admits PartiallyPaid, so a partly-settled month DOES come back
+            // from this query. The comment that used to sit here claimed the opposite ("fully-paid/
+            // overpaid months are never rewritten"), which is why lowering a price under what a
+            // student had already paid went unnoticed - it closed the month as Paid and swallowed the
+            // surplus (2026-09-08 review).
             var periods = await _unitOfWork.PaymentsRepo
                 .GetRepriceableStudentPeriodsAsync(dto.TeacherId, dto.TeacherStudentId, DateTime.MinValue);
 
@@ -976,7 +980,6 @@ public class PaymentService : IPaymentService
             {
                 var sessionAmountCache = new Dictionary<long, decimal>();
                 decimal outstandingDelta = 0m;
-                int paidDelta = 0, unpaidDelta = 0;
 
                 foreach (var p in periods)
                 {
@@ -1007,18 +1010,39 @@ public class PaymentService : IPaymentService
                         continue; // orphaned period with no session and no custom target — skip
                     }
 
-                    var d = RepricePeriodInPlace(p, newBase);
-                    await _unitOfWork.PaymentsRepo.UpdatePaymentPeriodAsync(p);
+                    // Any money already on this bill FREEZES it (teacher-confirmed 2026-09-08): a
+                    // month holding cash or a forgiven amount keeps the price it was settled at.
+                    // Without this, lowering a student's price below what they had already paid closed
+                    // the month as Paid and silently swallowed the surplus - RecomputePeriodStatus has
+                    // no Overpaid branch, so the extra money was neither refunded nor carried forward.
+                    // The session path has guarded this since 24d928f; this path never did, even though
+                    // its own comment claimed "fully-paid/overpaid months are never rewritten" (the repo
+                    // predicate admits PartiallyPaid, so partly-settled months were rewritten).
+                    if (p.AmountPaid > 0m || (p.ForgivenAmount ?? 0m) > 0m)
+                    {
+                        summary.KeptPaid++;
+                        continue;
+                    }
+
+                    decimal newDue = ComputeRepricedAmount(p, newBase);
+                    if (!await _unitOfWork.PaymentsRepo.TryRepricePeriodAsync(dto.TeacherId, p.Id, newDue))
+                    {
+                        // Lost the race to a collection landing on this bill between the read and the
+                        // write. It now holds money, so the rule above applies to it.
+                        summary.KeptPaid++;
+                        continue;
+                    }
                     summary.Repriced++;
-                    outstandingDelta += d.OutstandingDelta;
-                    paidDelta += d.PaidPeriodsDelta;
-                    unpaidDelta += d.UnpaidPeriodsDelta;
+                    // Every re-priced row had no cash and no forgiveness and stays Unpaid, so its whole
+                    // AmountDue was outstanding before and its whole new AmountDue is outstanding after.
+                    // Paid/unpaid PERIOD COUNTS cannot move for the same reason.
+                    outstandingDelta += newDue - p.AmountDue;
                 }
 
                 // Flush period rewrites before the consecutive-unpaid recompute reads them.
                 await _unitOfWork.SaveChangesAsync();
                 await ApplyRepriceCounterDeltasAsync(
-                    dto.TeacherId, dto.TeacherStudentId, outstandingDelta, paidDelta, unpaidDelta);
+                    dto.TeacherId, dto.TeacherStudentId, outstandingDelta, 0, 0);
             }
 
             await _unitOfWork.SaveChangesAsync();
@@ -1076,30 +1100,37 @@ public class PaymentService : IPaymentService
             // Sticky joining-month override (REQ-PAY-021/022): a human-set first-month amount is never
             // clobbered by a later session-price change.
             if (p.IsProrationManual) { summary.KeptManual++; continue; }
-            // A past/current bill someone has already settled against — cash collected, or an amount
-            // forgiven — is ground truth and is left exactly as it stands. RecomputePeriodStatus has no
-            // Overpaid branch, so re-pricing such a month below what is already settled would close it
-            // and silently swallow the surplus (and RepricePeriodInPlace's outstanding delta does not
-            // model ForgivenAmount). Scoped to the months this change newly reaches — FUTURE months
-            // keep their long-standing behaviour bit for bit.
-            if (p.PeriodStart < nextMonthStart
-                && (p.AmountPaid > 0m || (p.ForgivenAmount ?? 0m) > 0m))
+            // Any money already on this bill FREEZES it, in EVERY month - not only the months this
+            // change newly reaches. The old "PeriodStart < nextMonthStart" qualifier left FUTURE months
+            // unguarded, and the collect engine explicitly allows paying the NEXT month in advance
+            // (advance cap = current month + 1), so a student who prepaid October could still have that
+            // month re-priced below what they had handed over.
+            if (p.AmountPaid > 0m || (p.ForgivenAmount ?? 0m) > 0m)
             {
                 summary.KeptPaid++;
                 continue;
             }
 
-            var d = RepricePeriodInPlace(p, newAmount);
-            await _unitOfWork.PaymentsRepo.UpdatePaymentPeriodAsync(p);
+            decimal newDue = ComputeRepricedAmount(p, newAmount);
+            if (!await _unitOfWork.PaymentsRepo.TryRepricePeriodAsync(teacherId, p.Id, newDue))
+            {
+                // Lost the race to a collection on THIS student's bill. One bill is skipped and counted;
+                // the session-wide change carries on for everyone else. A session price change spans the
+                // whole session and must NEVER fail as a whole because one student was being collected
+                // from (teacher-confirmed 2026-09-08).
+                summary.KeptPaid++;
+                continue;
+            }
             summary.Repriced++;
             if (earliestRepriced is null || p.PeriodStart < earliestRepriced)
                 earliestRepriced = p.PeriodStart;
 
+            // No cash, no forgiveness, still Unpaid: the whole amount moves and the period counts do not.
             var acc = deltas.GetValueOrDefault(p.TeacherStudentId.Value);
             deltas[p.TeacherStudentId.Value] = (
-                acc.Outstanding + d.OutstandingDelta,
-                acc.Paid + d.PaidPeriodsDelta,
-                acc.Unpaid + d.UnpaidPeriodsDelta);
+                acc.Outstanding + (newDue - p.AmountDue),
+                acc.Paid,
+                acc.Unpaid);
         }
 
         summary.StudentsAffected = deltas.Count;
@@ -2021,25 +2052,22 @@ public class PaymentService : IPaymentService
     }
 
     /// <summary>
-    /// Rewrites a still-owed period's <c>AmountDue</c> to the new base (re-applying its proration
-    /// fraction), recomputes its status from what's already paid, and returns how the owning
-    /// student's counter aggregates must move. Input periods are always Unpaid/PartiallyPaid, so
-    /// their old outstanding contribution is <c>AmountDue - AmountPaid</c>.
+    /// The new <c>AmountDue</c> for a still-unpaid period at a new base price. A joining month re-applies
+    /// its stored proration fraction and is then SNAPPED TO THE NEAREST 5 and clamped to [0, full] - the
+    /// same rule every other joining-month writer uses (SetStudentProrationAmountAsync,
+    /// ComputeProrationSuggestionAsync). Before 2026-09-09 this multiplied raw, so once the session
+    /// re-price began reaching the current month a price change could leave an anchor at 33.43 while the
+    /// collect screen offered "reset to suggested: 35" and the frozen class-basis story read
+    /// "7 of 13 classes - 33.43 of 50", arithmetic no teacher could reproduce.
+    ///
+    /// Pure: the write itself is IPaymentRepo.TryRepricePeriodAsync, whose WHERE re-proves the period is
+    /// still untouched. Callers guarantee AmountPaid == 0 and ForgivenAmount == 0, which is why no status
+    /// recompute is needed here - such a row is Unpaid and stays Unpaid.
     /// </summary>
-    private (decimal OutstandingDelta, int PaidPeriodsDelta, int UnpaidPeriodsDelta)
-        RepricePeriodInPlace(PaymentPeriod p, decimal newBase)
-    {
-        decimal oldOutstanding = p.AmountDue - p.AmountPaid;
-
-        decimal newDue = p.IsProRated ? Math.Round(newBase * p.ProRatedFraction, 2) : newBase;
-        p.AmountDue = newDue;
-        p.PaymentStatus = RecomputePeriodStatus(p);
-
-        bool nowPaid = p.PaymentStatus == PaymentStatus.Paid;
-        decimal newOutstanding = nowPaid ? 0m : p.AmountDue - p.AmountPaid;
-
-        return (newOutstanding - oldOutstanding, nowPaid ? 1 : 0, nowPaid ? -1 : 0);
-    }
+    private static decimal ComputeRepricedAmount(PaymentPeriod p, decimal newBase) =>
+        p.IsProRated
+            ? ClampJoiningAmount(SnapToNearest5(newBase * p.ProRatedFraction), newBase)
+            : newBase;
 
     /// <summary>
     /// Applies accumulated re-price deltas to a student's counter and refreshes the

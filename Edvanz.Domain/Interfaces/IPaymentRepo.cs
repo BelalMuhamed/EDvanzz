@@ -186,6 +186,26 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
         long teacherId, long teacherStudentId, DateTime fromMonthStart);
 
     /// <summary>
+    /// Re-prices ONE still-unpaid period, but only while it is genuinely untouched — the UPDATE
+    /// carries <c>AmountPaid = 0 AND ISNULL(ForgivenAmount, 0) = 0</c> in its WHERE, so the check and
+    /// the write are one atomic statement. Returns <c>true</c> when the row was re-priced, and
+    /// <c>false</c> when it was NOT because money landed on it in the meantime (an assistant
+    /// collecting while the teacher saves a price change).
+    ///
+    /// This is deliberately a per-row conditional update rather than an optimistic-concurrency token
+    /// on the entity: a session price change spans every student in the session and must NEVER fail
+    /// as a whole because one student was being collected from (teacher-confirmed 2026-09-08). The
+    /// caller counts a <c>false</c> as "kept — already paid" and carries on with the rest, so the
+    /// loser of the race is one student's bill, never the operation. It also avoids putting a
+    /// RowVersion on PaymentPeriods, which would make every other writer of this hot table
+    /// (collect, forgive, departure reversal) start participating in concurrency checks.
+    ///
+    /// Status is not passed in: a row matching the WHERE has no cash and no forgiveness, so it is
+    /// Unpaid by definition and stays Unpaid.
+    /// </summary>
+    Task<bool> TryRepricePeriodAsync(long teacherId, long periodId, decimal newAmountDue);
+
+    /// <summary>
     /// Total arrears (sum of each unpaid month's remaining due) the student owes through
     /// <paramref name="throughMonthEnd"/> for the session. Server-owned "amount due" for the
     /// collect lookup and mark-paid; never includes months in advance.

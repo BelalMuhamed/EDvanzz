@@ -515,9 +515,13 @@ public class PaymentScreenService : IPaymentScreenService
             .ToList();
         if (storyStudentIds.Count > 0)
         {
+            // A HAND-SET joining month qualifies even when it is NOT prorated: it is sticky (every
+            // automatic re-price skips it) and can sit at the full month price, so without this the
+            // frozen bill is invisible on the ledger while it quietly diverges from the student's
+            // current price. Same predicate as GetStudentsByStatusAsync - all three surfaces now agree.
             var anchorInfo = (await _unitOfWork.PaymentsRepo
                     .GetAnchorPeriodInfoByStudentIdsAsync(teacherId, storyStudentIds))
-                .Where(a => a.IsProRated)
+                .Where(a => a.IsProRated || a.IsProrationManual)
                 .ToDictionary(a => a.StudentId);
             var joinDates = anchorInfo.Count > 0
                 ? await _unitOfWork.PaymentsRepo
@@ -1085,6 +1089,7 @@ public class PaymentScreenService : IPaymentScreenService
     /// fraction and the ENROLLMENT date ("joined {date}" — rev 2). Only students with a PRORATED anchor
     /// appear in the result. This mirrors the inline enrichment in <see cref="GetStudentsByStatusAsync"/>
     /// (kept intact for live-safety) so the collect list and the status list agree on the same figures.
+    /// A HAND-SET anchor is included even when it is not prorated (2026-09-09).
     /// One round of batch queries, no N+1.
     /// </summary>
     private async Task<Dictionary<long, ProrationEnrichment>> BuildProrationEnrichmentAsync(
@@ -1093,9 +1098,10 @@ public class PaymentScreenService : IPaymentScreenService
         var result = new Dictionary<long, ProrationEnrichment>();
         if (studentIds.Count == 0) return result;
 
+        // See EnrichProrationTransparencyAsync: a hand-set anchor counts even when not prorated.
         var anchorInfo = (await _unitOfWork.PaymentsRepo
                 .GetAnchorPeriodInfoByStudentIdsAsync(teacherId, studentIds))
-            .Where(a => a.IsProRated)
+            .Where(a => a.IsProRated || a.IsProrationManual)
             .ToDictionary(a => a.StudentId);
         if (anchorInfo.Count == 0) return result;
 
@@ -1107,9 +1113,11 @@ public class PaymentScreenService : IPaymentScreenService
         {
             if (anc.SessionId is null) continue;
             var joinedAt = joinDates.TryGetValue(studentId, out var ad) ? ad : anc.PeriodStart;
+            // IsProrated comes from the anchor row, not a hardcoded true: a hand-set anchor priced at
+            // the FULL month now reaches this point and must not claim to be prorated.
             result[studentId] = new ProrationEnrichment(
-                true, anc.ProRatedFraction, anc.AmountDue, joinedAt, false, anc.IsProrationManual,
-                anc.ClassesTotal, anc.ClassesBilled);
+                anc.IsProRated, anc.ProRatedFraction, anc.AmountDue, joinedAt, false,
+                anc.IsProrationManual, anc.ClassesTotal, anc.ClassesBilled);
         }
         return result;
     }
