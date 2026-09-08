@@ -2718,4 +2718,25 @@
   <data name="OnlineExamPublishedNotifBody" xml:space="preserve">
     <value>A new online exam is waiting for you: {0}</value>
   </data>
+  <data name="FullNameTooShort" xml:space="preserve">
+    <value>The name is too short</value>
+  </data>
+  <data name="FullNameTooLong" xml:space="preserve">
+    <value>The name can't be longer than 120 characters</value>
+  </data>
+  <data name="FullNameInvalidCharacters" xml:space="preserve">
+    <value>The name contains characters that aren't allowed</value>
+  </data>
+  <data name="ParentPortalNameRequired" xml:space="preserve">
+    <value>Write your name so the teacher knows who's asking.</value>
+  </data>
+  <data name="ParentPortalNewRequestNamedNotification" xml:space="preserve">
+    <value>{0} wants to follow {1}. Tap to approve.</value>
+  </data>
+  <data name="DeviceBlockedNotifTitle" xml:space="preserve">
+    <value>A student couldn't open your account</value>
+  </data>
+  <data name="DeviceBlockedNotifBody" xml:space="preserve">
+    <value>{0} tried to open your account from a different phone and was blocked. Open My Students and reset their device if this is really their phone.</value>
+  </data>
 </root>

@@ -478,7 +478,11 @@ public class PaymentService : IPaymentService
                 IsProRated = isProRated,
                 ProRatedTierLabel = proRatedLabel,
                 OriginalAmount = isProRated ? amountDue / (period?.ProRatedFraction ?? 1m) : null,
-                ProRatedAmount = isProRated ? amountDue : null
+                ProRatedAmount = isProRated ? amountDue : null,
+                // Where this cash actually landed, straight from the cascade above — oldest first.
+                SettledMonths = appliedSlices
+                    .Select(s => s.Period.PeriodStart.ToString("yyyy-MM", CultureInfo.InvariantCulture))
+                    .ToList()
             };
             // Resolve the collector's display name for the collection receipt.
             await EnrichCollectorNameAsync(resultDto.Transaction);
@@ -3320,6 +3324,17 @@ public class PaymentService : IPaymentService
             {
                 result.SyncedCount++;
                 entry.Success = true;
+
+                // Settlement echo: report what the ledger actually did with this cash, so the app can
+                // tell the teacher when it differs from the figure they quoted at the door. The amount
+                // itself is NEVER rewritten here — the cash changed hands, and adjusting the record to
+                // match a recomputation would put the wallet out of step with the drawer. AmountDue on
+                // the transaction is the total that was genuinely owed across the months this payment
+                // targeted; AmountPaid is what was applied. They diverge exactly when the device's
+                // cached figure was stale or wrong.
+                entry.AppliedAmount = collectResult.Data.Transaction.AmountPaid;
+                entry.AmountDueAtSync = collectResult.Data.Transaction.AmountDue;
+                entry.SettledMonths = collectResult.Data.SettledMonths;
                 continue;
             }
 

@@ -250,7 +250,7 @@ public class StudentUserController : ApiBaseController
         if (studentUserId is null) return StudentNotResolved();
 
         var result = await _studentUserService.GetTeacherBarcodeForStudentAsync(
-            studentUserId.Value, teacherId, this.ReadDeviceId());
+            studentUserId.Value, teacherId, this.ReadDeviceId(), this.ReadPreviousDeviceId());
         return ToResponse(result);
     }
 
@@ -290,7 +290,7 @@ public class StudentUserController : ApiBaseController
         if (studentUserId is null) return StudentNotResolved();
 
         var result = await _homeService.GetTeacherHomeAsync(
-            studentUserId.Value, teacherId, year, month, this.ReadDeviceId());
+            studentUserId.Value, teacherId, year, month, this.ReadDeviceId(), this.ReadPreviousDeviceId());
         return ToResponse(result);
     }
 
@@ -321,7 +321,7 @@ public class StudentUserController : ApiBaseController
         if (studentUserId is null) return StudentNotResolved();
 
         var result = await _studentUserService.RegisterDeviceForTeacherAsync(
-            studentUserId.Value, teacherId, this.ReadDeviceId());
+            studentUserId.Value, teacherId, this.ReadDeviceId(), this.ReadPreviousDeviceId());
         return ToResponse(result);
     }
 

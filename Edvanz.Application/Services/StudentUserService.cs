@@ -39,6 +39,7 @@ public class StudentUserService : IStudentUserService
     private readonly IQrCodeRenderer _qrCodeRenderer;
     private readonly ISubscriptionGateService _subscriptionGate;
     private readonly IStringLocalizer<Domain.Resources.Messages> _localizer;
+    private readonly IStudentDeviceLockService _deviceLock;
 
     public StudentUserService(
         IUnitOfWork unitOfWork,
@@ -46,7 +47,8 @@ public class StudentUserService : IStudentUserService
         IStudentLinkNotifier linkNotifier,
         IQrCodeRenderer qrCodeRenderer,
         ISubscriptionGateService subscriptionGate,
-        IStringLocalizer<Domain.Resources.Messages> localizer)
+        IStringLocalizer<Domain.Resources.Messages> localizer,
+        IStudentDeviceLockService deviceLock)
     {
         _unitOfWork = unitOfWork;
         _codeGenerator = codeGenerator;
@@ -54,6 +56,7 @@ public class StudentUserService : IStudentUserService
         _qrCodeRenderer = qrCodeRenderer;
         _subscriptionGate = subscriptionGate;
         _localizer = localizer;
+        _deviceLock = deviceLock;
     }
 
     /// <inheritdoc />
@@ -459,7 +462,7 @@ public class StudentUserService : IStudentUserService
 
     /// <inheritdoc />
     public async Task<Result<StudentTeacherBarcodeDto>> GetTeacherBarcodeForStudentAsync(
-        long studentUserId, long teacherId, string? deviceId)
+        long studentUserId, long teacherId, string? deviceId, string? previousDeviceId = null)
     {
         // ── 1. Validate the calling student account exists (defensive — the controller
         //       already resolved it from the JWT). ──
@@ -484,12 +487,12 @@ public class StudentUserService : IStudentUserService
         //       stable code lets the frontend hide the "Show QR Code" button. ──
         var config = await _unitOfWork.Users.GetConfigurationByTeacherIdAsync(teacherId);
 
-        // ── Device lock (per teacher): the QR is teacher-scoped content — gate it too. ──
-        var deviceDecision = StudentDeviceLockPolicy.Evaluate(link, config, deviceId);
-        if (deviceDecision == DeviceLockDecision.RegistrationRequired)
-            return Result<StudentTeacherBarcodeDto>.Failure(_localizer, StudentDeviceLockPolicy.RegistrationRequiredCode, HttpStatusCode.Conflict);
-        if (deviceDecision == DeviceLockDecision.Mismatch)
-            return Result<StudentTeacherBarcodeDto>.Failure(_localizer, StudentDeviceLockPolicy.MismatchCode, HttpStatusCode.Forbidden);
+        // ── Device lock (per teacher): the QR is teacher-scoped content — gate it too. Blocking it
+        //    also stops the student being scanned for attendance, so a wrong block here is costly:
+        //    see StudentDeviceLockPolicy for why the id is now stable per DEVICE, not per install. ──
+        var deviceOutcome = await _deviceLock.EvaluateAsync(link, teacherId, config, deviceId, previousDeviceId);
+        if (deviceOutcome.IsBlocked)
+            return Result<StudentTeacherBarcodeDto>.Failure(_localizer, deviceOutcome.FailureCode!, deviceOutcome.Status!.Value);
 
         if (config?.BarcodeDisplayMode == BarcodeDisplayMode.HardCopyOnly)
             return Result<StudentTeacherBarcodeDto>.Failure(_localizer, "BarcodeNotAvailableInApp", HttpStatusCode.Forbidden);
@@ -524,11 +527,15 @@ public class StudentUserService : IStudentUserService
 
     /// <inheritdoc />
     public async Task<Result<bool>> RegisterDeviceForTeacherAsync(
-        long studentUserId, long teacherId, string? deviceId)
+        long studentUserId, long teacherId, string? deviceId, string? previousDeviceId = null)
     {
-        var trimmed = deviceId?.Trim();
-        if (string.IsNullOrEmpty(trimmed))
+        // Normalize exactly as the gate does, so a value that OPENS content can never be rejected
+        // here (or stored in a shape the gate would then fail to match).
+        var trimmed = StudentDeviceLockPolicy.Normalize(deviceId);
+        if (trimmed is null)
             return Result<bool>.Failure(_localizer, "DeviceIdMissing", HttpStatusCode.BadRequest);
+
+        var previous = StudentDeviceLockPolicy.Normalize(previousDeviceId);
 
         var studentUser = await _unitOfWork.Users.GetActiveStudentUserByIdAsync(studentUserId);
         if (studentUser is null)
@@ -549,9 +556,19 @@ public class StudentUserService : IStudentUserService
         // Already bound: succeed if it's this device, otherwise the teacher/assistant must reset first.
         if (!string.IsNullOrWhiteSpace(link.LockedDeviceId))
         {
-            return string.Equals(link.LockedDeviceId, trimmed, StringComparison.Ordinal)
-                ? Result<bool>.Success(true, _localizer, "DeviceRegistered", HttpStatusCode.OK)
-                : Result<bool>.Failure(_localizer, StudentDeviceLockPolicy.MismatchCode, HttpStatusCode.Forbidden);
+            if (StudentDeviceLockPolicy.SameDevice(link.LockedDeviceId, trimmed))
+                return Result<bool>.Success(true, _localizer, "DeviceRegistered", HttpStatusCode.OK);
+
+            // Same phone, former id: re-point the binding onto the stable id (conditional write —
+            // it can never take over a binding held by a genuinely different device).
+            if (previous is not null && StudentDeviceLockPolicy.SameDevice(link.LockedDeviceId, previous))
+            {
+                await _unitOfWork.Users.TryMigrateStudentTeacherLinkDeviceAsync(
+                    link.Id, previous, trimmed, DateTime.UtcNow);
+                return Result<bool>.Success(true, _localizer, "DeviceRegistered", HttpStatusCode.OK);
+            }
+
+            return Result<bool>.Failure(_localizer, StudentDeviceLockPolicy.MismatchCode, HttpStatusCode.Forbidden);
         }
 
         // Not bound yet: bind atomically (first device wins if two register at once).
@@ -562,7 +579,7 @@ public class StudentUserService : IStudentUserService
         // Lost the race — accept if the winner was this same device, else it's a mismatch.
         var fresh = await _unitOfWork.Users.GetActiveStudentTeacherLinkAsync(studentUserId, teacherId);
         if (fresh?.LockedDeviceId is not null &&
-            string.Equals(fresh.LockedDeviceId, trimmed, StringComparison.Ordinal))
+            StudentDeviceLockPolicy.SameDevice(fresh.LockedDeviceId, trimmed))
             return Result<bool>.Success(true, _localizer, "DeviceRegistered", HttpStatusCode.OK);
 
         return Result<bool>.Failure(_localizer, StudentDeviceLockPolicy.MismatchCode, HttpStatusCode.Forbidden);

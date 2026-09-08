@@ -32,5 +32,11 @@ public interface IParentPortalNotifier
     /// 1 → the singular "A parent wants to follow {name}" text; more → the batched
     /// "{n} parents are waiting for your approval".
     /// </param>
-    Task NotifyPendingRequestsAsync(long teacherId, string studentName, int pendingCount);
+    /// <param name="parentName">
+    /// The requesting parent's self-declared name, so the singular message can say WHO is asking
+    /// rather than only who they want to follow. Optional: grants written before the portal
+    /// collected a name have none, and those fall back to the anonymous wording.
+    /// </param>
+    Task NotifyPendingRequestsAsync(
+        long teacherId, string studentName, int pendingCount, string? parentName = null);
 }

@@ -331,6 +331,12 @@ builder.Services.Configure<Edvanz.Application.Options.AppVersionOptions>(
 // redeploy.
 builder.Services.Configure<Edvanz.Application.Options.ParentPortalOptions>(
     builder.Configuration.GetSection(Edvanz.Application.Options.ParentPortalOptions.Section));
+
+// Device lock: kill switch + teacher-alert cooldown. Changing these on App Service
+// (DeviceLock__Enabled / DeviceLock__BlockNotificationCooldownHours) takes effect on restart,
+// with no redeploy — the recovery path for a wrongly-blocked student is otherwise thin.
+builder.Services.Configure<Edvanz.Application.Options.DeviceLockOptions>(
+    builder.Configuration.GetSection(Edvanz.Application.Options.DeviceLockOptions.Section));
 builder.Services.AddScoped<IAuthorizationHandler, ActiveSubscriptionHandler>();
 // Turns a subscription-only Forbidden into a clear localized "please subscribe" envelope
 // (instead of the framework's bare, body-less 403) on every gated action.
@@ -478,6 +484,28 @@ builder.Services.AddRateLimiter(o =>
             _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
             {
                 Window = TimeSpan.FromSeconds(60),
+                PermitLimit = 5,
+                QueueLimit = 0,
+                QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst
+            });
+    });
+
+    // Teacher profile writes (PUT /api/teacher/profile): partitioned per caller, mirrors
+    // "fcm-register". The teacher's display name is what students, parents and receipts show, so
+    // a rename is socially visible; 5/10min is far above the legitimate ceiling (this endpoint is
+    // also fired by the UI language toggle) while stopping a rename loop.
+    o.AddPolicy(Edvanz.Domain.Constants.TeacherConstants.ProfileUpdateRateLimitPolicy, httpContext =>
+    {
+        string partitionKey = httpContext.User.Identity?.IsAuthenticated == true
+            ? httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? "anonymous"
+            : httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        return System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey,
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                Window = TimeSpan.FromMinutes(10),
                 PermitLimit = 5,
                 QueueLimit = 0,
                 QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst

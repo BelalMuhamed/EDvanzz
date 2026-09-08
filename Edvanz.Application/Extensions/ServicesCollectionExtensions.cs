@@ -51,6 +51,7 @@ public static class ServicesCollectionExtensions
         // Student-teacher link request/approval flow: teacher-side ops + shared notifier
         services.AddScoped<ITeacherStudentLinkService, TeacherStudentLinkService>();
         services.AddScoped<IStudentLinkNotifier, StudentLinkNotifier>();
+        services.AddScoped<IStudentDeviceLockService, StudentDeviceLockService>();
         services.AddScoped<IParentUserService, ParentUserService>();
         // Shared parent SECTION builders (attendance / payments / videos / homework / grades).
         // Registered before its two consumers below — the parent mobile dashboard and the public

@@ -358,19 +358,49 @@ public class TeacherStudentLinkService : ITeacherStudentLinkService
         if (link is null)
             return Result<LinkedStudentListItemDto>.Failure(_localizer, "LinkNotFound", HttpStatusCode.NotFound);
 
-        // Idempotent: clearing an already-empty device binding is fine. The student re-registers
-        // (with consent) the next time they open the teacher. The link's connect/bind state is untouched.
+        return await ApplyDeviceResetAsync(link, actingUserId);
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<LinkedStudentListItemDto>> ResetStudentDeviceForAdminAsync(
+        long linkId, long actingUserId)
+    {
+        if (linkId <= 0)
+            return Result<LinkedStudentListItemDto>.Failure(_localizer, "InvalidLinkId", HttpStatusCode.BadRequest);
+
+        // SUPER-ADMIN ONLY — deliberately NOT teacher-scoped (see the interface doc). Support needs
+        // to unblock a student without being able to reach the teacher; every other caller must go
+        // through the teacher-scoped overload above.
+        var link = await _unitOfWork.Users.GetStudentTeacherLinkByIdAsync(linkId);
+        if (link is null)
+            return Result<LinkedStudentListItemDto>.Failure(_localizer, "LinkNotFound", HttpStatusCode.NotFound);
+
+        return await ApplyDeviceResetAsync(link, actingUserId);
+    }
+
+    /// <summary>
+    /// Shared device-reset write for both the teacher-scoped and the SuperAdmin entry points — the
+    /// callers differ only in how they RESOLVE (and authorize) the link. Idempotent: clearing an
+    /// already-empty binding is fine. The student re-registers (with consent) the next time they
+    /// open the teacher; the link's connect/bind state is untouched.
+    /// </summary>
+    private async Task<Result<LinkedStudentListItemDto>> ApplyDeviceResetAsync(
+        StudentTeacherLink link, long actingUserId)
+    {
         link.LockedDeviceId = null;
         link.DeviceBoundAt = null;
         link.DeviceResetAt = DateTime.UtcNow;
         link.DeviceResetByUserId = actingUserId;
+        // Clear the "teacher already told" throttle so the NEXT genuine block notifies again
+        // instead of being swallowed by a stamp left over from the lockout just resolved.
+        link.DeviceBlockNotifiedAt = null;
         await _unitOfWork.Users.UpdateStudentTeacherLinkAsync(link);
         await _unitOfWork.SaveChangesAsync();
 
         // Keep the row's Linked / Not linked state by re-loading the bound roster record, if any.
         TeacherStudent? roster = link.TeacherStudentId is null
             ? null
-            : await _unitOfWork.Users.GetActiveTeacherStudentByIdAsync(teacherId, link.TeacherStudentId.Value);
+            : await _unitOfWork.Users.GetActiveTeacherStudentByIdAsync(link.TeacherId, link.TeacherStudentId.Value);
 
         var item = await BuildLinkedStudentItemAsync(link, roster);
         return Result<LinkedStudentListItemDto>.Success(item, _localizer, "DeviceReset");

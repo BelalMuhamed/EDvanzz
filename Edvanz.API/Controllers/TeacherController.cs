@@ -282,6 +282,18 @@ public class TeacherController : ApiBaseController
     // ══════════════════════════════════════════════════════════════════════════
     [HttpPut("profile")]
     [HttpPut("{teacherId:long}/profile")]
+    // ROLE GATE (added with the teacher self-service rename). Without it this action carried only
+    // the global authenticated-user FallbackPolicy, while ResolveTeacherIdAsync resolves an
+    // ASSISTANT to their owning teacher — so any assistant could rename their tutor and silently
+    // replace their subject list. Same class as BUG-13; see CLAUDE.md §8.
+    // Verified before gating: no Center path reaches this action. Centers rename their teachers
+    // through PUT /api/center/teachers/{id} ([Authorize(Roles = "Center")], CenterController), and
+    // the app's language toggle — the only other PUT caller — returns early for assistant, center,
+    // centerAssistant and superAdmin (account_language_repository_impl.dart:54-59), issuing this
+    // request ONLY for AuthAccountType.teacher. The GET actions are deliberately left ungated so
+    // the acting-teacher read surface keeps working for the Center tier.
+    [ModulePermission(roles: new[] { "Teacher", "SuperAdmin" }, roleOnly: true)]
+    [Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(Edvanz.Domain.Constants.TeacherConstants.ProfileUpdateRateLimitPolicy)]
     [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.Teacher.TeacherProfileDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]

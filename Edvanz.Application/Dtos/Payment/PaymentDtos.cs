@@ -114,6 +114,12 @@ public class CollectPaymentResultDto
     public string? ProRatedTierLabel { get; set; }
     public decimal? OriginalAmount { get; set; }
     public decimal? ProRatedAmount { get; set; }
+
+    /// <summary>The months this cash cleared or part-cleared, as "YYYY-MM", oldest first — the same
+    /// settlement slices recorded in <c>PaymentTransactionAllocation</c>. Captured here at the point
+    /// the cascade runs so callers never need a follow-up query to learn WHERE the money landed;
+    /// the offline-sync echo uses it to tell a teacher which month an over-payment rolled into.</summary>
+    public List<string> SettledMonths { get; set; } = new();
 }
 
 /// <summary>
@@ -1020,6 +1026,30 @@ public class PaymentSyncEntryResultDto
 
     /// <summary>The existing transaction on conflict / already-synced.</summary>
     public PaymentTransactionDto? ExistingRecord { get; set; }
+
+    // ── Settlement echo (additive) ────────────────────────────────────────────────────────────
+    // An offline collection carries a CLIENT-computed amount and the server applies it verbatim —
+    // it never recomputes or rewrites it, because the cash physically changed hands and silently
+    // recording a different number would break wallet reconciliation. But when the device's cached
+    // figure was stale (or, before the client fix, simply wrong — the offline lookup showed the full
+    // monthly rate instead of the prorated/arrears total), the collector quoted one number and the
+    // ledger settled another, with nothing on any screen saying so.
+    //
+    // These three fields report that difference so the app can tell the teacher exactly what
+    // happened. Purely additive: older clients ignore unknown JSON members, so the LIVE build is
+    // unaffected. All three are null on failures, conflicts and already-synced replays.
+
+    /// <summary>Cash actually applied to periods by this record — the amount the collector took.</summary>
+    public decimal? AppliedAmount { get; set; }
+
+    /// <summary>What the student actually owed at sync time across the months this cash targeted
+    /// (Σ remaining due). Differs from <see cref="AppliedAmount"/> when the device's cached figure
+    /// was stale or wrong; equal on the healthy path.</summary>
+    public decimal? AmountDueAtSync { get; set; }
+
+    /// <summary>The months this cash cleared or part-cleared, as "YYYY-MM", oldest first — so the
+    /// app can say WHERE an over-payment landed rather than only that one occurred.</summary>
+    public List<string>? SettledMonths { get; set; }
 }
 
 /// <summary>

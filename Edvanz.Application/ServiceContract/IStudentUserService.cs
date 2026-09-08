@@ -130,7 +130,8 @@ public interface IStudentUserService
     /// <param name="deviceId">The caller's device id (X-Device-Id header); enforced only when the teacher's device
     /// lock is on (unregistered → <c>DeviceRegistrationRequired</c> 409, non-matching → <c>DeviceMismatch</c> 403).</param>
     /// <returns>Result containing the teacher name, the code, and the rendered QR SVG.</returns>
-    Task<Result<StudentTeacherBarcodeDto>> GetTeacherBarcodeForStudentAsync(long studentUserId, long teacherId, string? deviceId);
+    Task<Result<StudentTeacherBarcodeDto>> GetTeacherBarcodeForStudentAsync(
+        long studentUserId, long teacherId, string? deviceId, string? previousDeviceId = null);
 
     /// <summary>
     /// Registers the caller's current device as the one allowed to open <paramref name="teacherId"/>,
@@ -143,7 +144,8 @@ public interface IStudentUserService
     /// <param name="studentUserId">The StudentUser's Id (resolved from JWT by the controller).</param>
     /// <param name="teacherId">The linked teacher to bind this device under (route segment).</param>
     /// <param name="deviceId">The caller's device id (X-Device-Id header).</param>
-    Task<Result<bool>> RegisterDeviceForTeacherAsync(long studentUserId, long teacherId, string? deviceId);
+    Task<Result<bool>> RegisterDeviceForTeacherAsync(
+        long studentUserId, long teacherId, string? deviceId, string? previousDeviceId = null);
 
     /// <summary>
     /// SuperAdmin-only: pages ALL student accounts on the platform (not scoped to

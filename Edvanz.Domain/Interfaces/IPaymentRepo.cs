@@ -125,9 +125,15 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
     /// Distribution of money collected by per-month amount in [start, end] for the teacher (optionally
     /// one collector): groups the per-period settlement slices by applied amount so a multi-month
     /// payment counts once per month. Drives the "how many paid X" summary cards.
+    /// <para>
+    /// <paramref name="search"/> narrows to the same student name/code filter the ledger rows use
+    /// (<see cref="GetTransactionsByDateRangePagedAsync"/>), so the cards follow the visible list
+    /// instead of reporting the whole scope. Null/blank ⇒ unfiltered (the original behaviour).
+    /// </para>
     /// </summary>
     Task<IReadOnlyList<(decimal Amount, int Count)>> GetCollectionAmountTiersAsync(
-        long teacherId, DateTime startInclusive, DateTime endInclusive, long? collectedByUserId);
+        long teacherId, DateTime startInclusive, DateTime endInclusive, long? collectedByUserId,
+        string? search = null);
 
     // ══════════════════════════════════════════════
     // PAYMENT PERIOD QUERIES

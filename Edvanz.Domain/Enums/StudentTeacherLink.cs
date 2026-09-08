@@ -159,4 +159,15 @@ public class StudentTeacherLink : BaseEntity
     /// Plain audit column — no FK.
     /// </summary>
     public long? DeviceResetByUserId { get; set; }
+
+    /// <summary>
+    /// UTC timestamp the teacher was last told this student was BLOCKED trying to open from a
+    /// device other than the bound one. Purely a throttle stamp: a blocked app retries the gate on
+    /// every screen, and without this one lockout would fan out into dozens of pushes. Only the
+    /// request that wins the conditional stamp (see
+    /// <c>IUserRepo.TryStampDeviceBlockNotifiedAsync</c>) sends the notification; the rest are
+    /// denied silently. Cleared on device reset so the NEXT genuine block notifies again.
+    /// Null = never notified.
+    /// </summary>
+    public DateTime? DeviceBlockNotifiedAt { get; set; }
 }

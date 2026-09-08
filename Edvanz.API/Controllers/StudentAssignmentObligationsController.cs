@@ -28,14 +28,16 @@ public sealed class StudentAssignmentObligationsController : ApiBaseController
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IStringLocalizer<Messages> _localizer;
+    private readonly IStudentDeviceLockService _deviceLock;
 
     public StudentAssignmentObligationsController(
-        IExamHomeworkService service, ICurrentUserService currentUser, IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer)
+        IExamHomeworkService service, ICurrentUserService currentUser, IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer, IStudentDeviceLockService deviceLock)
     {
         _service = service;
         _currentUser = currentUser;
         _unitOfWork = unitOfWork;
         _localizer = localizer;
+        _deviceLock = deviceLock;
     }
 
     /// <summary>
@@ -88,7 +90,7 @@ public sealed class StudentAssignmentObligationsController : ApiBaseController
             return StudentResolution.Error(ForbiddenError("StudentEnrollmentRemoved"));
 
         // Device lock (per teacher): reject a wrong/unregistered device before any data access.
-        var deviceError = await this.CheckDeviceLockAsync(_unitOfWork, _localizer, teacherId, link);
+        var deviceError = await this.CheckDeviceLockAsync(_deviceLock, _localizer, teacherId, link);
         if (deviceError is not null)
             return StudentResolution.Error(deviceError);
 

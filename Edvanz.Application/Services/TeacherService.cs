@@ -289,6 +289,33 @@ public class TeacherService : ITeacherService
         if (string.IsNullOrWhiteSpace(dto.FullName))
             return Result<TeacherProfileDto>.Failure(_localizer, "FullNameRequired", HttpStatusCode.BadRequest);
 
+        // ── Display-name normalisation + validation ──────────────────────────────────────────
+        // The name is what students, parents and receipts show, so it is bounded and sanitised
+        // HERE — Users.FullName is nvarchar(max) with no DB constraint (see TeacherConstants).
+        //
+        // Validated ONLY WHEN THE VALUE ACTUALLY CHANGED. This endpoint is a whole-object PUT
+        // that the language toggle fires on EVERY language change, echoing the stored name back
+        // unmodified; validating unconditionally would start 400-ing that call on already-shipped
+        // clients for any pre-existing row that breaks a newly-introduced rule.
+        // Both sides are collapsed before comparing, so a legacy row that merely carries double
+        // spaces reads as UNCHANGED (it is silently repaired on write) and can never trip a new
+        // rule — only a genuine rename is validated.
+        string normalizedFullName = CollapseWhitespace(dto.FullName);
+        string currentFullName = CollapseWhitespace(user.FullName);
+        bool fullNameChanged = !string.Equals(normalizedFullName, currentFullName, StringComparison.Ordinal);
+
+        if (fullNameChanged)
+        {
+            if (normalizedFullName.Length < TeacherConstants.FullNameMinLength)
+                return Result<TeacherProfileDto>.Failure(_localizer, "FullNameTooShort", HttpStatusCode.BadRequest);
+
+            if (normalizedFullName.Length > TeacherConstants.FullNameMaxLength)
+                return Result<TeacherProfileDto>.Failure(_localizer, "FullNameTooLong", HttpStatusCode.BadRequest);
+
+            if (ContainsDisallowedNameCharacter(normalizedFullName))
+                return Result<TeacherProfileDto>.Failure(_localizer, "FullNameInvalidCharacters", HttpStatusCode.BadRequest);
+        }
+
         // Validate language preference (system UI language — independent from code/session generation language)
         if (dto.LanguagePreference != "en" && dto.LanguagePreference != "ar")
             return Result<TeacherProfileDto>.Failure(_localizer, "InvalidLanguagePreference", HttpStatusCode.BadRequest);
@@ -338,7 +365,7 @@ public class TeacherService : ITeacherService
         try
         {
             // Update User fields
-            user.FullName = dto.FullName.Trim();
+            user.FullName = normalizedFullName;
             await _unitOfWork.Users.UpdateAsync(user);
 
             // Update Teacher fields
@@ -393,6 +420,79 @@ public class TeacherService : ITeacherService
                 await _unitOfWork.RollbackAsync();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Trims the value and collapses every run of whitespace to a single space, so
+    /// <c>"أحمد      محمد"</c> cannot break list and receipt layouts. Returns <see cref="string.Empty"/>
+    /// for a null/blank input (the caller has already rejected that case).
+    /// </summary>
+    private static string CollapseWhitespace(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        var builder = new System.Text.StringBuilder(value.Length);
+        bool pendingSpace = false;
+
+        foreach (char c in value.Trim())
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                pendingSpace = true;
+                continue;
+            }
+
+            if (pendingSpace && builder.Length > 0) builder.Append(' ');
+            pendingSpace = false;
+            builder.Append(c);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Rejects characters that have no place in a display name. This is a DENYLIST on purpose —
+    /// Arabic letters, تشكيل diacritics, tatweel, Latin letters, hyphens and apostrophes are all
+    /// legitimate Egyptian names, and an allowlist would inevitably reject a real person.
+    ///
+    /// Blocked, and why:
+    /// <list type="bullet">
+    /// <item>Control characters — never renderable.</item>
+    /// <item>Format characters (<c>Cf</c>: U+200B-200F zero-width, U+202A-202E and U+2066-2069
+    /// bidi overrides, U+FEFF) — these can visually REORDER the text around them on a student's
+    /// screen and on a printed receipt, which is a spoofing vector, not a typo.</item>
+    /// <item>Variation selectors (U+FE00-FE0F) and symbol/emoji code points — they render
+    /// inconsistently in the QuestPDF Arabic font and in the PHP parent portal.</item>
+    /// <item>Private-use and unpaired surrogate code points — undefined rendering.</item>
+    /// </list>
+    /// NOTE: the stored value is never passed through <c>ArabicTextNormalizer</c>; that helper
+    /// exists for SEARCH FOLDING only, and folding on write would destroy the hamza/alef/
+    /// ta-marbuta distinctions the teacher deliberately typed.
+    /// </summary>
+    private static bool ContainsDisallowedNameCharacter(string value)
+    {
+        foreach (var rune in value.EnumerateRunes())
+        {
+            // Emoji and pictographic planes.
+            if (rune.Value >= 0x1F000) return true;
+
+            // Variation selectors (VS1-VS16) — category Mn, so they must be named explicitly
+            // rather than caught by a category check that would also reject Arabic diacritics.
+            if (rune.Value >= 0xFE00 && rune.Value <= 0xFE0F) return true;
+
+            var category = System.Text.Rune.GetUnicodeCategory(rune);
+            switch (category)
+            {
+                case System.Globalization.UnicodeCategory.Control:
+                case System.Globalization.UnicodeCategory.Format:
+                case System.Globalization.UnicodeCategory.Surrogate:
+                case System.Globalization.UnicodeCategory.PrivateUse:
+                case System.Globalization.UnicodeCategory.OtherSymbol:
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <inheritdoc />

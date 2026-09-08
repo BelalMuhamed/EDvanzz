@@ -3,6 +3,7 @@ using Edvanz.Domain.Enums;
 using Edvanz.Domain.Helpers;
 using Edvanz.Domain.Interfaces;
 using Edvanz.Infrastructure.Persistence;
+using Edvanz.Infrastructure.Repositories.Queries;
 using Microsoft.EntityFrameworkCore;
 
 namespace Edvanz.Infrastructure.Repositories;
@@ -74,9 +75,9 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
         var utcNow = DateTime.UtcNow;
 
         // Rolled-up child aggregates via correlated subqueries — one round
-        // trip, no per-unit N+1. SeenStudentCount mirrors the definition used
-        // by the top-level teacher video list (distinct students with any
-        // VideoAnalytics row across the unit's videos).
+        // trip, no per-unit N+1. Seen/unseen are DELIBERATELY absent from this
+        // projection: they need a distinct-students-per-unit rollup that a
+        // correlated COUNT cannot express, and are filled in below.
         var rows = await query
             .OrderByDescending(u => u.CreateAt)
             .Skip((page - 1) * pageSize)
@@ -101,22 +102,49 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
                     && _context.VideoAssets.Any(v => v.Id == au.VideoAssetId
                         && v.Status == VideoStatus.Published
                         && v.PublishDate != null && v.PublishDate > utcNow)),
-                SeenStudentCount = _context.VideoAnalytics
-                    .Count(a => _context.VideoAssetUnits
-                        .Any(au => au.UnitId == u.Id && au.VideoAssetId == a.VideoAssetId)),
-                UnseenStudentCount = _context.VideoScopes
-                    .Count(s => _context.VideoAssetUnits.Any(au => au.UnitId == u.Id && au.VideoAssetId == s.VideoAssetId))
-                    - _context.VideoAnalytics
-                        .Count(a => _context.VideoAssetUnits
-                            .Any(au => au.UnitId == u.Id && au.VideoAssetId == a.VideoAssetId)),
+                // Live attachments and quiz-bearing videos across the unit's
+                // members — same definitions the per-video card uses
+                // (Attached VideoAttachment FileObjects; a video "has a quiz"
+                // when a VideoExam exists for it), so the unit chip and the
+                // videos inside it can never disagree.
+                AttachmentCount = _context.Set<FileObject>()
+                    .Count(f => f.Category == FileCategory.VideoAttachment
+                             && f.Status == FileStatus.Attached
+                             && f.VideoAssetId != null
+                             && _context.VideoAssetUnits.Any(au =>
+                                    au.UnitId == u.Id && au.VideoAssetId == f.VideoAssetId)),
+                QuizCount = _context.VideoAssetUnits.Count(au =>
+                    au.UnitId == u.Id
+                    && _context.VideoExams.Any(e => e.VideoAssetId == au.VideoAssetId)),
                 CreatedAt = u.CreateAt,
             })
             .AsNoTracking()
             .ToListAsync();
 
+        // Seen / unseen roll up to DISTINCT STUDENTS across the unit's videos,
+        // using the same resolved-audience definition as the top-level video
+        // list (VideoAudienceQueries). The old projection counted raw
+        // VideoAnalytics ROWS as "seen" — so one student who opened four videos
+        // in the unit read as four — and scope ROWS as the audience, then
+        // subtracted one wrong number from the other and clamped, which is why
+        // unseen read 0 on real data. Batched for the materialised page only.
+        var pageUnitIds = rows.Select(r => r.Id).ToList();
+        var audience = await VideoAudienceQueries
+            .GetAudienceCountsForUnitsAsync(_context, teacherId, pageUnitIds);
+
         foreach (var row in rows)
         {
-            row.UnseenStudentCount = Math.Max(0, row.UnseenStudentCount);
+            if (audience.TryGetValue(row.Id, out var counts))
+            {
+                row.SeenStudentCount = counts.Seen;
+                row.UnseenStudentCount = Math.Max(0, counts.InScope - counts.Seen);
+            }
+            else
+            {
+                // No member videos, or none of them target anyone yet.
+                row.SeenStudentCount = 0;
+                row.UnseenStudentCount = 0;
+            }
         }
 
         return (rows, totalCount);
@@ -160,11 +188,9 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
                 SourceUrl = v.SourceUrl,
                 SourceType = v.SourceType,
                 DurationSeconds = v.DurationSeconds,
-                StudentsInScope = _context.VideoScopes.Count(s => s.VideoAssetId == v.Id),
                 TotalOpens = _context.VideoAnalytics
                     .Where(a => a.VideoAssetId == v.Id)
                     .Sum(a => (int?)a.OpenCount) ??0,
-                SeenStudentCount = _context.VideoAnalytics.Count(a => a.VideoAssetId == v.Id),
                 Status = v.Status,
                 PublishDate = v.PublishDate,
                 // Parity with GetTeacherVideosPagedAsync: cover-photo id (resolved to
@@ -181,8 +207,25 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
             .AsNoTracking()
             .ToListAsync();
 
+        // StudentsInScope / SeenStudentCount / UnseenStudentCount use the SAME
+        // resolved-audience definition as the top-level Videos tab and the
+        // analytics endpoint (VideoAudienceQueries), batched for the whole page.
+        // Before this, the videos-in-unit list still ran the pre-0aa4b35 rule —
+        // scope ROWS as the audience and ALL analytics rows as "seen", including
+        // out-of-scope and soft-deleted students — so the SAME video reported
+        // honest numbers on the Videos tab and inflated seen / 0 unseen when
+        // opened through its unit.
+        var videoIds = rows.Select(r => r.Id).ToList();
+        var audience = await VideoAudienceQueries
+            .GetAudienceCountsForVideosAsync(_context, teacherId, videoIds);
+
         foreach (var row in rows)
         {
+            if (audience.TryGetValue(row.Id, out var counts))
+            {
+                row.StudentsInScope = counts.InScope;
+                row.SeenStudentCount = counts.Seen;
+            }
             row.UnseenStudentCount = Math.Max(0, row.StudentsInScope - row.SeenStudentCount);
         }
 

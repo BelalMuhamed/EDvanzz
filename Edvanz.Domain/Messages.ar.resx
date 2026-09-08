@@ -2706,4 +2706,25 @@
   <data name="OnlineExamPublishedNotifBody" xml:space="preserve">
     <value>فيه امتحان أونلاين جديد مستنيك: {0}</value>
   </data>
+  <data name="FullNameTooShort" xml:space="preserve">
+    <value>الاسم قصير أوي</value>
+  </data>
+  <data name="FullNameTooLong" xml:space="preserve">
+    <value>الاسم مينفعش يزيد عن 120 حرف</value>
+  </data>
+  <data name="FullNameInvalidCharacters" xml:space="preserve">
+    <value>الاسم فيه رموز مش مسموح بيها</value>
+  </data>
+  <data name="ParentPortalNameRequired" xml:space="preserve">
+    <value>اكتب اسمك عشان المدرس يعرف مين اللي بيطلب.</value>
+  </data>
+  <data name="ParentPortalNewRequestNamedNotification" xml:space="preserve">
+    <value>{0} عايز يتابع {1}. اضغط للموافقة.</value>
+  </data>
+  <data name="DeviceBlockedNotifTitle" xml:space="preserve">
+    <value>طالب مقدرش يفتح حسابك</value>
+  </data>
+  <data name="DeviceBlockedNotifBody" xml:space="preserve">
+    <value>{0} حاول يفتح حسابك من موبايل تاني واتمنع. افتح طلابي وأعِد تعيين جهازه لو ده فعلاً موبايله.</value>
+  </data>
 </root>

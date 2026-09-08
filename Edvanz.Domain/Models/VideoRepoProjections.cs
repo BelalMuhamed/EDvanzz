@@ -90,8 +90,28 @@ public sealed class TeacherVideoUnitListRow
     /// </summary>
     public int ScheduledVideoCount { get; set; }
 
+    /// <summary>
+    /// DISTINCT students who have opened at least ONE member video. A student
+    /// who opened four videos in the unit counts once.
+    /// </summary>
     public int SeenStudentCount { get; set; }
+
+    /// <summary>
+    /// Distinct students the unit's member videos target who have opened none
+    /// of them. Always the resolved audience minus <see cref="SeenStudentCount"/>,
+    /// never a scope-row count.
+    /// </summary>
     public int UnseenStudentCount { get; set; }
+
+    /// <summary>
+    /// Live attachments across the unit's member videos (Attached FileObjects
+    /// of category VideoAttachment).
+    /// </summary>
+    public int AttachmentCount { get; set; }
+
+    /// <summary>Member videos that carry a quiz (a VideoExam exists for them).</summary>
+    public int QuizCount { get; set; }
+
     public DateTime CreatedAt { get; set; }
 }
 

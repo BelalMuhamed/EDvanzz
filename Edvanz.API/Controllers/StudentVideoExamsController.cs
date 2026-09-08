@@ -1,4 +1,4 @@
-using Edvanz.Domain.Resources;
+﻿using Edvanz.Domain.Resources;
 using Microsoft.Extensions.Localization;
 using Edvanz.API.Attributes;
 using Edvanz.Application.Dtos.VideoContentManagement;
@@ -36,14 +36,16 @@ public sealed class StudentVideoExamsController : ApiBaseController
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IStringLocalizer<Messages> _localizer;
+    private readonly IStudentDeviceLockService _deviceLock;
 
     public StudentVideoExamsController(
-        IStudentVideoExamService service, ICurrentUserService currentUser, IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer)
+        IStudentVideoExamService service, ICurrentUserService currentUser, IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer, IStudentDeviceLockService deviceLock)
     {
         _service = service;
         _currentUser = currentUser;
         _unitOfWork = unitOfWork;
         _localizer = localizer;
+        _deviceLock = deviceLock;
     }
 
     /// <summary>
@@ -183,7 +185,7 @@ public sealed class StudentVideoExamsController : ApiBaseController
             return StudentResolution.Error(ForbiddenError("StudentEnrollmentRemoved"));
 
         // Device lock (per teacher): reject a wrong/unregistered device before any data access.
-        var deviceError = await this.CheckDeviceLockAsync(_unitOfWork, _localizer, teacherId, link);
+        var deviceError = await this.CheckDeviceLockAsync(_deviceLock, _localizer, teacherId, link);
         if (deviceError is not null)
             return StudentResolution.Error(deviceError);
 

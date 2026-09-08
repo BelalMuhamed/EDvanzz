@@ -1,4 +1,4 @@
-using Edvanz.Domain.Resources;
+﻿using Edvanz.Domain.Resources;
 using Microsoft.Extensions.Localization;
 using System.Net;
 using Edvanz.API.Attributes;
@@ -40,16 +40,18 @@ public sealed class StudentPaymentController : ApiBaseController
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IStringLocalizer<Messages> _localizer;
+    private readonly IStudentDeviceLockService _deviceLock;
 
     public StudentPaymentController(
         IPaymentService paymentService,
         ICurrentUserService currentUser,
-        IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer)
+        IUnitOfWork unitOfWork, IStringLocalizer<Messages> localizer, IStudentDeviceLockService deviceLock)
     {
         _paymentService = paymentService;
         _currentUser = currentUser;
         _unitOfWork = unitOfWork;
         _localizer = localizer;
+        _deviceLock = deviceLock;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ public sealed class StudentPaymentController : ApiBaseController
             return StudentResolution.Error(ForbiddenError("StudentEnrollmentRemoved"));
 
         // Device lock (per teacher): reject a wrong/unregistered device before any data access.
-        var deviceError = await this.CheckDeviceLockAsync(_unitOfWork, _localizer, teacherId, link);
+        var deviceError = await this.CheckDeviceLockAsync(_deviceLock, _localizer, teacherId, link);
         if (deviceError is not null)
             return StudentResolution.Error(deviceError);
 

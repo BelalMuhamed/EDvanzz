@@ -52,4 +52,18 @@ public interface IStudentLinkNotifier
     /// </summary>
     /// <param name="linked">True = linked (access granted), false = unlinked (access paused).</param>
     Task NotifyLinkBindingChangedAsync(long studentUserId, long teacherId, bool linked);
+
+    /// <summary>
+    /// Tells the TEACHER that a linked student was BLOCKED trying to open their content from a
+    /// device other than the one bound to them, so the teacher can reset the binding if it is
+    /// legitimate. Recipient is the teacher; the text carries the student's name.
+    ///
+    /// Before this existed a locked-out student had to physically find their teacher — the teacher
+    /// was never told anything had happened. The caller MUST have already won the
+    /// <c>TryStampDeviceBlockNotifiedAsync</c> cooldown claim: a blocked app re-hits the gate on
+    /// every screen, so this is only safe to call once per link per cooldown window.
+    /// </summary>
+    /// <param name="teacherId">Teacher (recipient) id.</param>
+    /// <param name="studentName">The student's display name for the notification text.</param>
+    Task NotifyDeviceBlockedAsync(long teacherId, string studentName);
 }

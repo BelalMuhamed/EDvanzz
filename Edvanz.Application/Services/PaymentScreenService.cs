@@ -242,8 +242,10 @@ public class PaymentScreenService : IPaymentScreenService
             rows.Add(BuildCollectionRowFromTransaction(items[i], baseIndex + i + 1));
 
         // "How many paid X" distribution across the whole scope (not just this page), by per-month amount.
+        // `search` is threaded so the cards narrow with the visible list — without it they kept
+        // reporting the unfiltered scope while the rows below were filtered ("cards keep showing total").
         var amountTiers = (await _unitOfWork.PaymentsRepo
-                .GetCollectionAmountTiersAsync(teacherId, startDate, endDate, null))
+                .GetCollectionAmountTiersAsync(teacherId, startDate, endDate, null, search))
             .Select(t => new CollectionAmountTier { Amount = t.Amount, Count = t.Count })
             .ToList();
 
@@ -300,6 +302,23 @@ public class PaymentScreenService : IPaymentScreenService
         var all = new List<CollectionRow>(txns.Count);
         foreach (var tx in txns)
             all.Add(BuildCollectionRowFromTransaction(tx, 0));
+
+        // "How many paid X", folded HERE — while `all` still holds only the collection (positive) rows
+        // and is still in insertion order. Below, the money-out lines are appended and the list is
+        // sorted in place, so this is the only safe point to read them positionally.
+        //
+        // Identical arithmetic to GetCollectionAmountTiersAsync — group the per-period settlement
+        // slices by their applied amount — but folded from rows already materialized, so it costs no
+        // extra round trip AND inherits every filter the ledger applied (notably `search`). Without
+        // that the cards kept reporting the unfiltered scope while the list below was filtered.
+        // Money-out lines are excluded by construction: refunds and withdrawals belong to DailyNets.
+        var amountTiers = all
+            .SelectMany(r => r.AppliedMonths)
+            .GroupBy(s => s.Amount)
+            .Select(g => new CollectionAmountTier { Amount = g.Key, Count = g.Count() })
+            .OrderByDescending(t => t.Count)
+            .ThenByDescending(t => t.Amount)
+            .ToList();
 
         // ── Negatives (money OUT) — refunds + wallet withdrawals — unless "collections only". ──
         var moneyOutPerformers = new List<(CollectionRow Row, long PerformerId)>();
@@ -419,10 +438,6 @@ public class PaymentScreenService : IPaymentScreenService
 
         // §2b transparency: fill system-suggested + set-by name on this page's prorated-first-month rows.
         await EnrichProrationTransparencyAsync(teacherId, pageRows);
-
-        var amountTiers = (await repo.GetCollectionAmountTiersAsync(teacherId, startDate, endDate, collectorId))
-            .Select(t => new CollectionAmountTier { Amount = t.Amount, Count = t.Count })
-            .ToList();
 
         var response = new CollectionsByMonthResponse
         {
@@ -558,27 +573,57 @@ public class PaymentScreenService : IPaymentScreenService
     /// <inheritdoc />
     public async Task<Result<CollectionsSummaryResponse>> GetCollectionsSummaryAsync(
         long teacherId, DateTime? from, DateTime? to, string? asOfMonth, long? sessionId = null,
-        long? collectedByUserId = null)
+        long? collectedByUserId = null, bool? exactRange = null)
     {
         var repo = _unitOfWork.PaymentsRepo;
 
         // ── Resolve the money/activity window (TRUE range). Both omitted → current local month. ──
+        //
+        // EXACT-INSTANT variant: mirrors the collections-ledger path (GetCollectionsByMonthAsync) so
+        // the day-insight cards are computed over the SAME window as the rows they sit above. The
+        // wallet's "in drawer now" scope is bounded by the exact last hand-over instant; widening it
+        // to whole days made the card report the collector's entire day while the list below showed
+        // only the post-hand-over slice — the "cards don't follow my filter" report.
+        //
+        // `exactRange` comes from the controller reading the RAW query text. NEVER re-infer it from
+        // the parsed value's TimeOfDay: a midnight-to-midnight exact window parses identically to a
+        // date-only day filter, and that ambiguity is exactly what leaked a whole extra day before.
         DateTime startDate, endExclusive;
+        // Both bounds are required for an instant window: mirroring one bound onto the other would
+        // make [from, to) empty rather than "that instant's day". A single-sided value always takes
+        // the whole-day path below, which is also all the controller can ever produce.
+        bool timed = (exactRange ?? false) && from.HasValue && to.HasValue;
         if (from.HasValue || to.HasValue)
         {
-            var f = (from ?? to)!.Value.Date;
-            var t = (to ?? from)!.Value.Date;
-            if (t < f) (f, t) = (t, f);
-            startDate = f;
-            endExclusive = t.AddDays(1);
+            if (timed)
+            {
+                // Precise instants [from, to) — the wallet's "in drawer now" window.
+                var f = from!.Value;
+                var t = to!.Value;
+                if (t < f) (f, t) = (t, f);
+                startDate = f;
+                endExclusive = t;
+            }
+            else
+            {
+                var f = (from ?? to)!.Value.Date;
+                var t = (to ?? from)!.Value.Date;
+                if (t < f) (f, t) = (t, f);
+                startDate = f;
+                endExclusive = t.AddDays(1);
+            }
         }
         else
         {
+            timed = false;
             var today = _timeZoneService.GetTeacherLocalDate(teacherId);
             startDate = new DateTime(today.Year, today.Month, 1);
             endExclusive = startDate.AddMonths(1);
         }
-        DateTime toInclusive = endExclusive.AddDays(-1);   // last day of the window
+        // Last moment of the window — drives the as-of month default below. On the day-based path this
+        // is the final DAY (unchanged); on an exact range stepping back a whole day would misfile a
+        // window that opens at a month boundary (e.g. Oct 1 00:00 → Oct 1 21:00 reading as September).
+        DateTime toInclusive = timed ? endExclusive.AddTicks(-1) : endExclusive.AddDays(-1);
         DateTime endInclusiveTick = endExclusive.AddTicks(-1);
 
         // ── Resolve the as-of month for the status buckets (payment status is per-month). ──
@@ -1822,6 +1867,14 @@ public class PaymentScreenService : IPaymentScreenService
         // (item.Note — how the mobile app sends it) or batch-level; either satisfies the rule.
         // Unresolved students / invalid amounts are left to the per-item loop below (they fail
         // there, not as a note error).
+        //
+        // SECOND, WIDER acceptance (added with the offline-collect fix): an amount that exactly
+        // settles a whole number of the student's OWED months is equally unremarkable, even when
+        // those months are not all priced at the monthly rate. The multiple rule silently assumed
+        // they were — so a correctly prorated joining month (100 against a 300 rate), a
+        // carried-forward transfer balance, or a partly-paid month were all rejected as "custom"
+        // and 400'd. Strictly widening: the cheap multiple check still runs first and anything it
+        // accepted is untouched; the extra query only happens on amounts that used to be rejected.
         foreach (var item in students)
         {
             if (EffectiveItemNote(item, note) is not null) continue;
@@ -1829,7 +1882,20 @@ public class PaymentScreenService : IPaymentScreenService
             var st = await _unitOfWork.Students.GetActiveByIdAndTeacherAsync(item.StudentId, teacherId);
             if (st is null) continue;
             decimal rate = await _unitOfWork.PaymentsRepo.GetStudentMonthlyRateAsync(teacherId, item.StudentId);
-            if (!Extensions.PaymentAmountRules.IsWholeMonthMultiple(item.Amount, rate))
+            if (Extensions.PaymentAmountRules.IsWholeMonthMultiple(item.Amount, rate)) continue;
+
+            // Same window and ordering the collect engine itself fills: arrears through the current
+            // local month plus at most one month in advance, oldest first. Reading it here keeps the
+            // "does this need a note?" answer aligned with what the engine will actually do.
+            var localDate = _timeZoneService.GetTeacherLocalDate(teacherId);
+            var advanceCapEnd = new DateTime(localDate.Year, localDate.Month, 1).AddMonths(2).AddDays(-1);
+            var owedPeriods = await _unitOfWork.PaymentsRepo
+                .GetUnpaidPeriodsThroughAsync(teacherId, item.StudentId, null, advanceCapEnd);
+            var remainings = owedPeriods
+                .Select(p => p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m))
+                .ToList();
+
+            if (!Extensions.PaymentAmountRules.SettlesWholeOwedMonths(item.Amount, remainings))
                 return Result<SubmitCollectionResponse>.Failure(
                     _localizer, PaymentConstants.Messages.CollectNoteRequired, HttpStatusCode.BadRequest);
         }

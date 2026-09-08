@@ -174,6 +174,8 @@ public sealed class VideoUnitService : IVideoUnitService
             ScheduledVideoCount = r.ScheduledVideoCount,
             SeenStudentCount = r.SeenStudentCount,
             UnseenStudentCount = r.UnseenStudentCount,
+            AttachmentCount = r.AttachmentCount,
+            QuizCount = r.QuizCount,
             CreatedAt = r.CreatedAt,
         }).ToList();
 

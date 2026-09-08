@@ -23,6 +23,7 @@ public class StudentLinkNotifier : IStudentLinkNotifier
 {
     private const string TeacherDeepLink = "/teacher/link-requests";
     private const string StudentDeepLink = "/student/teachers";
+    private const string TeacherLinkedStudentsDeepLink = "/teacher/linked-students";
 
     private readonly IUnitOfWork _unitOfWork;
     private readonly IPushNotificationSender _pushSender;
@@ -111,6 +112,24 @@ public class StudentLinkNotifier : IStudentLinkNotifier
         var (title, body) = RenderInCulture(studentUser.LanguagePreference, titleKey, bodyKey, teacherName);
 
         await PersistAndPushAsync(studentUser.UserId, title, body, new PushPayload { Category = NotificationCategory.notifiction, Screen = StudentDeepLink });
+    }
+
+    /// <inheritdoc />
+    public async Task NotifyDeviceBlockedAsync(long teacherId, string studentName)
+    {
+        var teacher = await _unitOfWork.Users.GetTeacherByIdAsync(teacherId);
+        if (teacher is null) return;
+
+        var (title, body) = RenderInCulture(teacher.LanguagePreference,
+            "DeviceBlockedNotifTitle", "DeviceBlockedNotifBody", studentName);
+
+        // Deep-links to the linked-students screen, where the per-student "reset device" action
+        // already lives — the teacher can act straight from the notification.
+        await PersistAndPushAsync(teacher.UserId, title, body, new PushPayload
+        {
+            Category = NotificationCategory.notifiction,
+            Screen = TeacherLinkedStudentsDeepLink
+        });
     }
 
     // ══════════════════════════════════════════════

@@ -1,4 +1,4 @@
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using Edvanz.Application.Dtos;
 using Edvanz.Application.Dtos.StudentUser;
 
@@ -26,6 +26,12 @@ public interface IStudentTeacherHomeService
     /// <param name="deviceId">The caller's device id (X-Device-Id header). Used only when the teacher has enabled
     /// the device lock: an unregistered device is rejected with <c>DeviceRegistrationRequired</c> (409) and a
     /// non-matching device with <c>DeviceMismatch</c> (403). Ignored when the lock is off.</param>
+    /// <param name="previousDeviceId">The id this device was PREVIOUSLY known by
+    /// (X-Device-Id-Previous header), sent only by clients upgrading from the old per-install id.
+    /// Matched only after <paramref name="deviceId"/> fails and only against an existing binding, so
+    /// it can migrate the binding onto the stable id but can never widen access. Null/absent on the
+    /// live 4.0.0+17 build.</param>
     Task<Result<StudentTeacherHomeDto>> GetTeacherHomeAsync(
-        long studentUserId, long teacherId, int? year, int? month, string? deviceId);
+        long studentUserId, long teacherId, int? year, int? month, string? deviceId,
+        string? previousDeviceId = null);
 }

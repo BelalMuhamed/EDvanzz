@@ -859,6 +859,35 @@ namespace Edvanz.Infrastructure.Repositories
         }
 
         /// <inheritdoc />
+        public async Task<bool> TryMigrateStudentTeacherLinkDeviceAsync(
+            long linkId, string previousDeviceId, string newDeviceId, DateTime boundAtUtc)
+        {
+            // Conditional set guarded on the OLD id: the row is re-pointed only while it is still
+            // bound to exactly that value. Two requests from the same upgraded phone racing here
+            // both write the same new id (the loser simply affects 0 rows), and a link bound to a
+            // genuinely different device is never touched.
+            int rows = await _context.Set<StudentTeacherLink>()
+                .Where(l => l.Id == linkId && l.LockedDeviceId == previousDeviceId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(l => l.LockedDeviceId, newDeviceId)
+                    .SetProperty(l => l.DeviceBoundAt, boundAtUtc));
+            return rows == 1;
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> TryStampDeviceBlockNotifiedAsync(long linkId, DateTime nowUtc, DateTime cutoffUtc)
+        {
+            // Exactly one blocked request per cooldown window wins this UPDATE and owns the push;
+            // the rest see 0 rows and stay silent.
+            int rows = await _context.Set<StudentTeacherLink>()
+                .Where(l => l.Id == linkId &&
+                            (l.DeviceBlockNotifiedAt == null || l.DeviceBlockNotifiedAt < cutoffUtc))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(l => l.DeviceBlockNotifiedAt, nowUtc));
+            return rows == 1;
+        }
+
+        /// <inheritdoc />
         public async Task<StudentTeacherLink?> GetStudentTeacherLinkByIdAsync(long linkId)
         {
             // No TeacherId predicate — SUPER-ADMIN ONLY, see interface doc.

@@ -39,20 +39,34 @@ public class ParentPortalNotifier : IParentPortalNotifier
     }
 
     /// <inheritdoc />
-    public async Task NotifyPendingRequestsAsync(long teacherId, string studentName, int pendingCount)
+    public async Task NotifyPendingRequestsAsync(
+        long teacherId, string studentName, int pendingCount, string? parentName = null)
     {
         var teacher = await _unitOfWork.Users.GetTeacherByIdAsync(teacherId);
         if (teacher is null) return;
 
-        // One row = name the student; a burst = give the count instead (the caller already
+        // One row = name the people; a burst = give the count instead (the caller already
         // guarantees at most one of these per teacher per hour).
+        //
+        // Naming the PARENT is the point: "someone wants to follow Ahmed" tells the teacher
+        // nothing they can act on. The anonymous wording survives only for grants written before
+        // the portal collected a name — new requests always carry one.
         bool batched = pendingCount > 1;
+        bool named = !batched && !string.IsNullOrWhiteSpace(parentName);
+
         string messageKey = batched
             ? "ParentPortalNewRequestsNotification"
-            : "ParentPortalNewRequestNotification";
-        object arg = batched ? pendingCount : studentName;
+            : named
+                ? "ParentPortalNewRequestNamedNotification"
+                : "ParentPortalNewRequestNotification";
 
-        string body = RenderInCulture(teacher.LanguagePreference, messageKey, arg);
+        object[] args = batched
+            ? new object[] { pendingCount }
+            : named
+                ? new object[] { parentName!.Trim(), studentName }
+                : new object[] { studentName };
+
+        string body = RenderInCulture(teacher.LanguagePreference, messageKey, args);
 
         // The portal has no separate title string in the resx; the body doubles as the title, the
         // same shape the FCM payload uses elsewhere when only one string is authored.
@@ -68,7 +82,7 @@ public class ParentPortalNotifier : IParentPortalNotifier
     /// culture. The HTTP request culture belongs to the PORTAL (a parent's browser), which is the
     /// wrong language for the teacher's push.
     /// </summary>
-    private string RenderInCulture(string? languagePreference, string messageKey, object arg)
+    private string RenderInCulture(string? languagePreference, string messageKey, params object[] args)
     {
         var originalUi = CultureInfo.CurrentUICulture;
         var original = CultureInfo.CurrentCulture;
@@ -79,7 +93,7 @@ public class ParentPortalNotifier : IParentPortalNotifier
             CultureInfo.CurrentCulture = culture;
             CultureInfo.CurrentUICulture = culture;
 
-            return _localizer[messageKey, arg];
+            return _localizer[messageKey, args];
         }
         finally
         {

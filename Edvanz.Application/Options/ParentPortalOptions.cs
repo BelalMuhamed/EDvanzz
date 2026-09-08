@@ -28,6 +28,18 @@ public class ParentPortalOptions
     public string PortalKey { get; set; } = string.Empty;
 
     /// <summary>
+    /// When true the parent's NAME is required on an access request (400
+    /// <c>ParentPortalNameRequired</c> when blank). Default FALSE so the API can be deployed
+    /// BEFORE the portal build that collects the name: an older portal that omits it keeps
+    /// working instead of 400-ing every parent at sign-in.
+    ///
+    /// Flip <c>ParentPortal__RequireParentName</c> to true in App Service settings once the
+    /// portal drop that asks for the name is confirmed live — no redeploy needed. The length
+    /// check below still applies whenever a name IS supplied, in either mode.
+    /// </summary>
+    public bool RequireParentName { get; set; } = false;
+
+    /// <summary>
     /// Abuse cap: access requests one DEVICE may create per rolling hour. Above it the endpoint
     /// returns <c>ParentPortalTooManyRequests</c> (429) instead of writing another row.
     /// </summary>

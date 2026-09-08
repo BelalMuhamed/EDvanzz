@@ -39,9 +39,16 @@ public class ParentPortalAccessRequestDto
     /// The parent's own name, so the teacher can tell who is asking instead of judging a bare phone
     /// number. Self-declared and unverified.
     ///
-    /// REQUIRED by the portal's sign-in form, but intentionally OPTIONAL here: the API deploys ahead
-    /// of the portal, so demanding it on the wire would make the live portal start failing the
-    /// moment this ships. Validated for length only when supplied.
+    /// REQUIRED — a blank value fails with <c>ParentPortalNameRequired</c>. The portal enforced this
+    /// first and shipped ahead of the API precisely so that tightening it here could not break the
+    /// live sign-in form; do not relax it back without checking what the deployed portal sends.
+    ///
+    /// Deliberately left <c>string?</c> with no <c>[Required]</c> attribute: model-binding validation
+    /// would return an unlocalized 400 that the portal cannot render, instead of the localized
+    /// <c>Result</c> failure the rest of this endpoint produces. The check lives in the service.
+    ///
+    /// The stored COLUMN stays nullable — grants created before this field existed have no name and
+    /// remain valid; they are healed by the fill-only backfill in ParentPortalService.
     /// </summary>
     public string? ParentName { get; set; }
 

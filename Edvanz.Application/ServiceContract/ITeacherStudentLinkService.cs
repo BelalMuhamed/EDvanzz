@@ -100,6 +100,18 @@ public interface ITeacherStudentLinkService
         long teacherId, long linkId, long actingUserId);
 
     /// <summary>
+    /// SUPER-ADMIN device reset: same effect as <see cref="ResetStudentDeviceAsync"/> but resolves
+    /// the link by id ALONE, with no teacher predicate — support must be able to unblock a student
+    /// without going through their teacher. Every non-admin caller MUST use the teacher-scoped
+    /// overload; this one performs no tenant check by design and is reachable only from the
+    /// SuperAdmin-gated admin controller.
+    /// </summary>
+    /// <param name="linkId">The student-teacher link whose device binding to clear.</param>
+    /// <param name="actingUserId">User.Id of the SuperAdmin performing the reset (audit).</param>
+    Task<Result<LinkedStudentListItemDto>> ResetStudentDeviceForAdminAsync(
+        long linkId, long actingUserId);
+
+    /// <summary>
     /// Rejects a Pending request (terminal, kept for audit — the student may send
     /// a new request later). Notifies the student post-commit, best-effort.
     /// </summary>

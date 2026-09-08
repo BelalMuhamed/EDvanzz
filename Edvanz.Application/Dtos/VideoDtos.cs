@@ -490,8 +490,30 @@ public sealed class TeacherVideoUnitListItemDto
     /// </summary>
     public int ScheduledVideoCount { get; set; }
 
+    /// <summary>
+    /// DISTINCT students who have opened at least one video in the unit — a
+    /// student who opened four of them counts once.
+    /// </summary>
     public int SeenStudentCount { get; set; }
+
+    /// <summary>
+    /// Distinct students the unit's videos target who have opened none of them
+    /// (resolved audience minus <see cref="SeenStudentCount"/>).
+    /// </summary>
     public int UnseenStudentCount { get; set; }
+
+    /// <summary>
+    /// Live attachments across the unit's videos — drives the 📎 chip on the
+    /// unit card, which the client used to hard-code to 0.
+    /// </summary>
+    public int AttachmentCount { get; set; }
+
+    /// <summary>
+    /// Videos in the unit that carry a quiz — drives the "Quiz" chip on the
+    /// unit card, which the client used to hard-code to 0.
+    /// </summary>
+    public int QuizCount { get; set; }
+
     public DateTime CreatedAt { get; set; }
     /// <summary>Display names of the unit's audience (session + group names) — shown on the card.</summary>
     public List<string> RecipientLabels { get; set; } = new();

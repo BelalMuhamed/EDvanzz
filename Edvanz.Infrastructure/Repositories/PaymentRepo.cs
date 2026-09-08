@@ -253,7 +253,8 @@
 
         /// <inheritdoc />
         public async Task<IReadOnlyList<(decimal Amount, int Count)>> GetCollectionAmountTiersAsync(
-            long teacherId, DateTime startInclusive, DateTime endInclusive, long? collectedByUserId)
+            long teacherId, DateTime startInclusive, DateTime endInclusive, long? collectedByUserId,
+            string? search = null)
         {
             // Distribution of money collected by per-MONTH amount: group the settlement slices
             // (one per cleared month) by their applied amount, so a multi-month payment counts once
@@ -268,6 +269,17 @@
 
             if (collectedByUserId.HasValue)
                 query = query.Where(a => a.PaymentTransaction.CollectedByUserId == collectedByUserId.Value);
+
+            // Same student name/code predicate as the ledger rows (GetTransactionsByDateRangePagedAsync)
+            // so the "how many paid X" cards narrow with the visible list instead of reporting the whole
+            // scope. Case- AND Arabic-variant-insensitive, provider-side via dbo.ArabicNormalize.
+            var term = string.IsNullOrWhiteSpace(search) ? null : ArabicTextNormalizer.Normalize(search.Trim());
+            if (!string.IsNullOrEmpty(term))
+                query = query.Where(a =>
+                    (a.PaymentTransaction.StudentName != null
+                        && EF.Functions.Like(DbSearch.ArabicNormalize(a.PaymentTransaction.StudentName), $"%{term}%"))
+                    || (a.PaymentTransaction.StudentCode != null
+                        && EF.Functions.Like(DbSearch.ArabicNormalize(a.PaymentTransaction.StudentCode), $"%{term}%")));
 
             var rows = await query
                 .GroupBy(a => a.AmountApplied)

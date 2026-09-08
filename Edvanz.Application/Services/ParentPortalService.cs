@@ -138,18 +138,37 @@ public sealed class ParentPortalService : IParentPortalService
                     _localizer, "ParentPortalPhoneFormat", HttpStatusCode.BadRequest);
         }
 
-        // The parent's self-declared name. Optional on the wire (the portal deploys after the API)
-        // but length-checked when present so a stray paste cannot overflow the column. No
-        // normalization: nothing ever compares this value, unlike ClaimedPhone.
-        string? parentName = null;
-        if (!string.IsNullOrWhiteSpace(dto.ParentName))
+        // The parent's self-declared name. REQUIRED: the teacher approves by recognising a person,
+        // and a request that arrives as a bare phone number gives them nothing to decide on.
+        //
+        // This is validated HERE, in the shape-validation block, deliberately: it runs before the
+        // student code is ever resolved, so a missing name can never become a probe that
+        // distinguishes a real student from an invented one.
+        //
+        // No normalization — nothing ever compares this value, unlike ClaimedPhone.
+        // Gated by ParentPortal__RequireParentName (default false) so this API can ship BEFORE
+        // the portal build that collects the name — an older portal that omits it keeps working
+        // rather than 400-ing every parent. Flip the setting once that portal drop is live.
+        if (string.IsNullOrWhiteSpace(dto.ParentName))
         {
-            parentName = dto.ParentName.Trim();
-            if (parentName.Length < ParentPortalConstants.ParentNameMinLength
-                || parentName.Length > ParentPortalConstants.ParentNameMaxLength)
+            if (_options.RequireParentName)
+                return Result<ParentPortalAccessRequestResultDto>.Failure(
+                    _localizer, "ParentPortalNameRequired", HttpStatusCode.BadRequest);
+        }
+        else
+        {
+            string suppliedName = dto.ParentName.Trim();
+            if (suppliedName.Length < ParentPortalConstants.ParentNameMinLength
+                || suppliedName.Length > ParentPortalConstants.ParentNameMaxLength)
                 return Result<ParentPortalAccessRequestResultDto>.Failure(
                     _localizer, "ParentPortalNameLength", HttpStatusCode.BadRequest);
         }
+
+        // NULL (not "") when absent, so the column keeps its "no name recorded" meaning and
+        // the fill-only backfill below stays a genuine fill rather than writing blanks.
+        string? parentName = string.IsNullOrWhiteSpace(dto.ParentName)
+            ? null
+            : dto.ParentName.Trim();
 
         var now = DateTime.UtcNow;
         var windowStart = now - AbuseWindow;
@@ -331,7 +350,7 @@ public sealed class ParentPortalService : IParentPortalService
 
         // ── 7. Post-commit, best-effort notification (§5.1 ordering) with hourly batching. ──
         if (!grantActive)
-            await NotifyTeacherAsync(teacher.Id, student.StudentName, newestPendingBefore, now);
+            await NotifyTeacherAsync(teacher.Id, student.StudentName, parentName, newestPendingBefore, now);
 
         return grantActive ? ActiveResult(teacherName, student) : PendingResult(teacherName);
     }
@@ -701,7 +720,7 @@ public sealed class ParentPortalService : IParentPortalService
     /// inside the window the teacher was already told, so this burst stays silent.
     /// </summary>
     private async Task NotifyTeacherAsync(
-        long teacherId, string studentName, DateTime? newestPendingBefore, DateTime now)
+        long teacherId, string studentName, string? parentName, DateTime? newestPendingBefore, DateTime now)
     {
         try
         {
@@ -710,7 +729,7 @@ public sealed class ParentPortalService : IParentPortalService
                 return;
 
             int pendingCount = await _unitOfWork.ParentPortalAccesses.CountPendingForTeacherAsync(teacherId);
-            await _notifier.NotifyPendingRequestsAsync(teacherId, studentName, pendingCount);
+            await _notifier.NotifyPendingRequestsAsync(teacherId, studentName, pendingCount, parentName);
         }
         catch (Exception ex)
         {

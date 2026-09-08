@@ -224,6 +224,36 @@ public class TeacherStudentLinksController : ModuleSixApiBaseController
     }
 
     /// <summary>
+    /// Admin variant of <see cref="ResetStudentDevice"/> — clears a student's registered device
+    /// with no tenant scope, so support can unblock a student without going through their teacher.
+    /// SuperAdmin only.
+    /// </summary>
+    /// <remarks>
+    /// Until this existed the ONLY way to clear a device binding was the owning teacher (or their
+    /// assistant) tapping Reset in the app: a student blocked on their own phone — which the
+    /// pre-2026-09-08 per-install device id made possible without any device change at all — had no
+    /// route to support. The owning teacher is resolved from the link row itself.
+    /// AUTH: SuperAdmin role only (roleOnly gate).
+    /// </remarks>
+    /// <response code="200">Device reset; returns the updated linked-student row.</response>
+    /// <response code="400">Invalid link id.</response>
+    /// <response code="401">JWT missing or expired.</response>
+    /// <response code="403">Caller is not a SuperAdmin.</response>
+    /// <response code="404">Link not found.</response>
+    [HttpPost("admin/{linkId:long}/reset-device")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.TeacherLinks.LinkedStudentListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ResetStudentDeviceForAdmin([FromRoute] long linkId)
+    {
+        var result = await _linkService.ResetStudentDeviceForAdminAsync(linkId, GetActingUserId());
+        return ToResponse(result);
+    }
+
+    /// <summary>
     /// Removes the student-record binding from an accepted link. The student stays
     /// connected (Accepted) but loses access until re-linked. Requires <c>Student / Edit</c>.
     /// </summary>

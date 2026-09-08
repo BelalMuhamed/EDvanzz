@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -37,6 +37,7 @@ public sealed class StudentTeacherHomeService : IStudentTeacherHomeService
     private readonly ITimeZoneService _timeZoneService;
     private readonly IStringLocalizer<Edvanz.Domain.Resources.Messages> _localizer;
     private readonly ILogger<StudentTeacherHomeService> _logger;
+    private readonly IStudentDeviceLockService _deviceLock;
 
     /// <summary>Max merged upcoming-exam rows returned (the card shows the nearest; the rest feed "view all").</summary>
     private const int UpcomingExamsCap = 10;
@@ -56,7 +57,8 @@ public sealed class StudentTeacherHomeService : IStudentTeacherHomeService
         IExamHomeworkService examHomeworkService,
         ITimeZoneService timeZoneService,
         IStringLocalizer<Edvanz.Domain.Resources.Messages> localizer,
-        ILogger<StudentTeacherHomeService> logger)
+        ILogger<StudentTeacherHomeService> logger,
+        IStudentDeviceLockService deviceLock)
     {
         _unitOfWork = unitOfWork;
         _attendanceService = attendanceService;
@@ -67,11 +69,13 @@ public sealed class StudentTeacherHomeService : IStudentTeacherHomeService
         _timeZoneService = timeZoneService;
         _localizer = localizer;
         _logger = logger;
+        _deviceLock = deviceLock;
     }
 
     /// <inheritdoc />
     public async Task<Result<StudentTeacherHomeDto>> GetTeacherHomeAsync(
-        long studentUserId, long teacherId, int? year, int? month, string? deviceId)
+        long studentUserId, long teacherId, int? year, int? month, string? deviceId,
+        string? previousDeviceId = null)
     {
         // ── Access gate (mirrors every other student read: active + bound link) ──
         var studentUser = await _unitOfWork.Users.GetActiveStudentUserByIdAsync(studentUserId);
@@ -93,12 +97,11 @@ public sealed class StudentTeacherHomeService : IStudentTeacherHomeService
         var teacher = batch.Teachers.GetValueOrDefault(teacherId);
         batch.Configurations.TryGetValue(teacherId, out var config);
 
-        // ── Device lock (per teacher): only opens from the student's registered device. ──
-        var deviceDecision = StudentDeviceLockPolicy.Evaluate(link, config, deviceId);
-        if (deviceDecision == DeviceLockDecision.RegistrationRequired)
-            return Result<StudentTeacherHomeDto>.Failure(_localizer, StudentDeviceLockPolicy.RegistrationRequiredCode, HttpStatusCode.Conflict);
-        if (deviceDecision == DeviceLockDecision.Mismatch)
-            return Result<StudentTeacherHomeDto>.Failure(_localizer, StudentDeviceLockPolicy.MismatchCode, HttpStatusCode.Forbidden);
+        // ── Device lock (per teacher): only opens from the student's registered device. Reuses the
+        //    config already loaded in the batch above, so the gate costs no extra query here. ──
+        var deviceOutcome = await _deviceLock.EvaluateAsync(link, teacherId, config, deviceId, previousDeviceId);
+        if (deviceOutcome.IsBlocked)
+            return Result<StudentTeacherHomeDto>.Failure(_localizer, deviceOutcome.FailureCode!, deviceOutcome.Status!.Value);
 
         string teacherName = string.Empty;
         if (teacher is not null && batch.Users.TryGetValue(teacher.UserId, out var teacherUser))

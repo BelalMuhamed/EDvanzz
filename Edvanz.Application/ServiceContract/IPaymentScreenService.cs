@@ -66,9 +66,16 @@ public interface IPaymentScreenService
     /// <param name="collectedByUserId">Optional: scope the money/activity/departure figures to ONE
     /// collector's own ledger (the drill-in screens' day strip). Null → account-wide (unchanged).
     /// The per-month status buckets are always account-wide.</param>
+    /// <param name="exactRange">Mirrors the collections-ledger contract: <c>true</c> ⇒ treat
+    /// <paramref name="from"/>/<paramref name="to"/> as PRECISE INSTANTS bounding <c>[from, to)</c>
+    /// (the wallet's "in drawer now" window); <c>false</c>/null ⇒ inclusive whole days, byte-identical
+    /// to the original behaviour. The caller derives this from the RAW query text — never from the
+    /// parsed value's TimeOfDay, which cannot distinguish a midnight-to-midnight exact window from a
+    /// date-only day filter. Without it this summary widened both bounds to whole days while the rows
+    /// endpoint honoured the instants, so the day-insight cards disagreed with the list they sit above.</param>
     Task<Result<CollectionsSummaryResponse>> GetCollectionsSummaryAsync(
         long teacherId, DateTime? from, DateTime? to, string? asOfMonth, long? sessionId = null,
-        long? collectedByUserId = null);
+        long? collectedByUserId = null, bool? exactRange = null);
 
     /// <summary>
     /// Withdrawal/reset history for one assistant's wallet (newest first) — the record of every

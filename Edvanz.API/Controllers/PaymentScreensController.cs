@@ -138,8 +138,21 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
         // day strip on their screen can never report the account-wide day. Teacher/SuperAdmin unchanged.
         collectedByUserId = AssistantScopeUserId() ?? collectedByUserId;
 
+        // Same RAW-query-text exact-range sniff as the ledger action above — the summary MUST resolve
+        // the window identically or the day-insight cards describe a different span than the rows they
+        // sit above (the wallet's "in drawer now" scope reported the whole day). Reading the raw text
+        // is load-bearing: a midnight-to-midnight exact window parses to the same DateTimes as a
+        // date-only day filter, so TimeOfDay cannot tell them apart. Date-only callers — every
+        // deployed client — leave this null and hit the original whole-day path unchanged.
+        bool? exactRange = null;
+        if (fromDate.HasValue && toDate.HasValue)
+        {
+            exactRange = Request.Query["from"].ToString().Contains(':')
+                || Request.Query["to"].ToString().Contains(':');
+        }
+
         var result = await _screenService.GetCollectionsSummaryAsync(
-            teacherId.Value, fromDate, toDate, asOfMonth, sessionId, collectedByUserId);
+            teacherId.Value, fromDate, toDate, asOfMonth, sessionId, collectedByUserId, exactRange);
         return ToResponse(result);
     }
 

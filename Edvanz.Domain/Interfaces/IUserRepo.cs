@@ -400,6 +400,30 @@ namespace Edvanz.Domain.Interfaces
         Task<bool> TryBindStudentTeacherLinkDeviceAsync(long linkId, string deviceId, DateTime boundAtUtc);
 
         /// <summary>
+        /// One-time upgrade hop for the device-lock binding: re-points a link from the id the
+        /// device used to present (<paramref name="previousDeviceId"/> — the pre-2026-09-08
+        /// per-install uuid) to its new STABLE id, but ONLY when the link is still bound to
+        /// exactly that previous id. Returns true when this call performed the migration, false
+        /// when it did not apply (already migrated, bound to something else, or unbound).
+        ///
+        /// Conditional set — it can never create a binding, never overwrite a DIFFERENT device,
+        /// and is safe to lose a race on (the winner writes the same value). Writes immediately
+        /// (no SaveChanges). <paramref name="boundAtUtc"/> refreshes DeviceBoundAt so the teacher's
+        /// linked-students screen shows when the current id took effect.
+        /// </summary>
+        Task<bool> TryMigrateStudentTeacherLinkDeviceAsync(
+            long linkId, string previousDeviceId, string newDeviceId, DateTime boundAtUtc);
+
+        /// <summary>
+        /// Claims the right to notify the teacher that this student was blocked on a foreign
+        /// device. Stamps <c>DeviceBlockNotifiedAt</c> ONLY when it is null or older than
+        /// <paramref name="cutoffUtc"/>, and returns true for the single caller that won. Every
+        /// other blocked request in the cooldown window gets false and stays silent, so a locked-out
+        /// app retrying on every screen cannot spam the teacher. Writes immediately (no SaveChanges).
+        /// </summary>
+        Task<bool> TryStampDeviceBlockNotifiedAsync(long linkId, DateTime nowUtc, DateTime cutoffUtc);
+
+        /// <summary>
         /// Terminates EVERY live (Active or Pending) student-teacher link for the teacher,
         /// setting LinkStatus = RemovedByTeacher, RemovedByUserId and UnlinkedAt. Used when a
         /// managerial subscription is activated with the "remove existing links" option so no
