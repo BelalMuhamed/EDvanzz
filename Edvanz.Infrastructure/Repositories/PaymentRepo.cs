@@ -356,17 +356,27 @@
 
         /// <inheritdoc />
         public async Task<List<PaymentPeriod>> GetRepriceableSessionDefaultPeriodsAsync(
-            long teacherId, long sessionId, DateTime fromMonthStart)
+            long teacherId, long sessionId, DateTime monthlyFromMonthStart, DateTime perSessionFromDate)
         {
-            // Tracked � the caller rewrites AmountDue/PaymentStatus. Only future (PeriodStart on/after
-            // next month) periods that are still owed (Unpaid/PartiallyPaid) � Paid/Overpaid are left
-            // settled. Students with their own CustomPaymentAmount are excluded (BR-PAY-003): a session
-            // price change must not touch an individually-priced student.
+            // Tracked � the caller rewrites AmountDue/PaymentStatus. Only periods that are still owed
+            // (Unpaid/PartiallyPaid) � Paid/Overpaid are left settled. Students with their own
+            // CustomPaymentAmount are excluded (BR-PAY-003): a session price change must not touch an
+            // individually-priced student.
+            // The lower bound is per PERIOD TYPE: a Monthly row re-prices over the caller's whole window
+            // (every still-owed month, arrears included � the same scope a per-student price change
+            // uses), while a PerSession row only re-prices from next month � a class already delivered
+            // was delivered at the old price and is never re-priced.
+            // CARRIED/MOVED rows are never re-priced: an IsCarriedForward or MovedFromSessionId row is
+            // AGREED debt from somewhere else that merely lives under this SessionId, not a bill this
+            // session generated (�7.4/�7.4b treat it as untouchable everywhere else).
             return await _context.PaymentPeriods
                 .Where(p => p.TeacherId == teacherId
                     && p.SessionId == sessionId
                     && p.TeacherStudentId != null
-                    && p.PeriodStart >= fromMonthStart
+                    && !p.IsCarriedForward
+                    && p.MovedFromSessionId == null
+                    && ((p.PeriodType == PeriodType.Monthly && p.PeriodStart >= monthlyFromMonthStart)
+                        || (p.PeriodType != PeriodType.Monthly && p.PeriodStart >= perSessionFromDate))
                     && (p.PaymentStatus == PaymentStatus.Unpaid
                         || p.PaymentStatus == PaymentStatus.PartiallyPaid)
                     && !_context.StudentPaymentCounters.Any(c =>
@@ -1711,7 +1721,12 @@
                     && p.PeriodStart >= monthStart && p.PeriodStart <= monthEnd);
 
             decimal groupCollected = await groupMonthPeriods.SumAsync(p => (decimal?)p.AmountPaid) ?? 0m;
-            decimal groupExpected = await groupMonthPeriods.SumAsync(p => (decimal?)p.AmountDue) ?? 0m;
+            // What this scope is actually BILLED for the month, NET OF FORGIVEN — the same basis as the
+            // tracking card's "Expected · This month", so the session screens sum back to the card to the
+            // cent (forgiving money must lower both, never just one). Distinct from GroupExpectedRate
+            // below, which is the LIVE per-student rate and answers a different question.
+            decimal groupExpected = await groupMonthPeriods
+                .SumAsync(p => (decimal?)(p.AmountDue - (p.ForgivenAmount ?? 0m))) ?? 0m;
             // Outstanding is the arrears THROUGH the selected month only (not the all-time counter,
             // which includes pre-generated future months): sum of (due - paid) over unpaid periods
             // whose start is on/before the month end.

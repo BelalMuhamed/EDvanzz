@@ -301,13 +301,19 @@ public interface IPaymentService
         string sessionName, DateTime assignedAt);
 
     /// <summary>
-    /// Called by SessionService when a session's <c>SessionAmount</c> changes. Re-prices every
-    /// FUTURE (next month onward, teacher-local) still-owed period of the session to
-    /// <paramref name="newAmount"/>, EXCEPT students who carry their own custom price (BR-PAY-003).
-    /// The current month and past/paid periods are left untouched. Runs on the caller's transaction
-    /// (does not open/commit its own).
+    /// Called by SessionService when a session's <c>SessionAmount</c> changes. Re-prices the
+    /// session's still-owed periods to <paramref name="newAmount"/>, EXCEPT students who carry their
+    /// own custom price (BR-PAY-003).
+    /// <para>Window: EVERY still-owed Monthly bill — arrears, the current month and future months —
+    /// the same scope a per-student price change uses; PerSession bills only from next month onward,
+    /// since a class already delivered was delivered at the old price. Never rewritten: paid periods,
+    /// carried/moved debt, hand-set joining months (<c>IsProrationManual</c>), and past/current bills
+    /// that already carry collected or forgiven money.</para>
+    /// <para>Runs on the caller's transaction (does not open/commit its own). Returns what it did so
+    /// the app can report the recalculation instead of leaving it silent.</para>
     /// </summary>
-    Task<Result<bool>> OnSessionAmountChangedAsync(long teacherId, long sessionId, decimal newAmount);
+    Task<Result<SessionRepriceSummary>> OnSessionAmountChangedAsync(
+        long teacherId, long sessionId, decimal newAmount);
 
     /// <summary>
     /// Retroactively reconciles EXISTING students' first month to the teacher's CURRENT proration config

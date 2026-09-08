@@ -150,14 +150,26 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
         long teacherId, long teacherStudentId, long? sessionId, DateTime throughMonthEnd);
 
     /// <summary>
-    /// FUTURE re-priceable periods for a SESSION (a session-price change): periods of
-    /// <paramref name="sessionId"/> whose PeriodStart is on/after <paramref name="fromMonthStart"/>
-    /// and are still Unpaid or PartiallyPaid, EXCLUDING students who carry an individual
-    /// CustomPaymentAmount (BR-PAY-003 — their price is not affected by session changes). Tracked
-    /// (the caller rewrites AmountDue/PaymentStatus and saves). Ordered by student then sequence.
+    /// Re-priceable periods for a SESSION (a session-price change): periods of
+    /// <paramref name="sessionId"/> that are still Unpaid or PartiallyPaid, EXCLUDING students who
+    /// carry an individual CustomPaymentAmount (BR-PAY-003 — their price is not affected by session
+    /// changes) and EXCLUDING carried/moved rows (<c>IsCarriedForward</c> or
+    /// <c>MovedFromSessionId</c>) — agreed debt from elsewhere is never re-priced by this session.
+    /// Tracked (the caller rewrites AmountDue/PaymentStatus and saves). Ordered by student then
+    /// sequence.
+    /// <para>The window is per PERIOD TYPE because the two bill different things: a Monthly row is a
+    /// month's bill that is still being collected, so it re-prices over the caller's whole window
+    /// (<c>DateTime.MinValue</c> = every still-owed month, arrears included — the same scope a
+    /// per-student price change uses); a PerSession row is one class, and a class already delivered
+    /// was delivered at the old price, so it re-prices only from
+    /// <paramref name="perSessionFromDate"/> (next month).</para>
     /// </summary>
+    /// <param name="teacherId">Tenant scope.</param>
+    /// <param name="sessionId">The session whose default-priced periods are re-priced.</param>
+    /// <param name="monthlyFromMonthStart">Inclusive lower bound for <c>PeriodType.Monthly</c> rows.</param>
+    /// <param name="perSessionFromDate">Inclusive lower bound for <c>PeriodType.PerSession</c> rows.</param>
     Task<List<PaymentPeriod>> GetRepriceableSessionDefaultPeriodsAsync(
-        long teacherId, long sessionId, DateTime fromMonthStart);
+        long teacherId, long sessionId, DateTime monthlyFromMonthStart, DateTime perSessionFromDate);
 
     /// <summary>
     /// FUTURE re-priceable periods for one STUDENT (a per-student price change): the student's
@@ -485,6 +497,9 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
     /// <paramref name="status"/> (paid | prorated | unpaid | partial), paginated, each with that
     /// month's paid/due amounts and their counter's outstanding/unpaid-months. Also
     /// returns the group's month-scoped collected/expected totals and total outstanding.
+    /// <c>GroupExpected</c> is what the scope is BILLED for the month (Σ AmountDue − Forgiven, the
+    /// tracking card's basis); <c>GroupExpectedRate</c> is the same scope at TODAY's per-student
+    /// rates. The two diverge whenever a bill was written at a price that has since changed.
     ///
     /// <para><paramref name="status"/> is OPTIONAL: when null, ALL of the (assigned) scope's
     /// students are returned, each carrying its OWN computed status on

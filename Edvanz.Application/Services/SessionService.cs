@@ -263,6 +263,10 @@ public class SessionService : ISessionService
         if (ownsTransaction)
             await _unitOfWork.BeginTransactionAsync();
 
+        // Set only when the price actually changed; rides back on the response so the app reports
+        // what the re-pricing did instead of leaving the teacher to guess.
+        Dtos.Payment.SessionRepriceSummary? priceReconcile = null;
+
         try
         {
             // 7. Apply updates
@@ -288,11 +292,17 @@ public class SessionService : ISessionService
             if (datesOrRecurrenceChanged)
                 await _attendanceService.RegenerateOccurrencesAsync(teacherId, sessionId);
 
-            // ── PAYMENT INTEGRATION: re-price the session's FUTURE unpaid periods to the new amount
+            // ── PAYMENT INTEGRATION: re-price the session's still-owed periods to the new amount
             // (session-default students only; custom-priced students keep their price — BR-PAY-003).
-            // Runs on THIS transaction so the price + re-pricing commit atomically.
+            // Monthly bills re-price from the teacher-local CURRENT month, per-class bills from next
+            // month. Runs on THIS transaction so the price + re-pricing commit atomically. The summary
+            // rides back on the response so the app can report the recalculation.
             if (amountChanged)
-                await _paymentService.OnSessionAmountChangedAsync(teacherId, sessionId, dto.SessionAmount);
+            {
+                var repriceResult = await _paymentService
+                    .OnSessionAmountChangedAsync(teacherId, sessionId, dto.SessionAmount);
+                priceReconcile = repriceResult.Data;
+            }
 
             // ── PAYMENT INTEGRATION: billing periods are generated ONCE, at assignment, and only as
             // far as the end date AT THAT TIME. Extending the window afterwards used to leave the
@@ -319,6 +329,7 @@ public class SessionService : ISessionService
         }
 
         var resultDto = await BuildSessionDtoAsync(session);
+        resultDto.PriceReconcile = priceReconcile;
         return Result<SessionDto>.Success(resultDto, _localizer, "SessionUpdatedSuccess");
     }
 

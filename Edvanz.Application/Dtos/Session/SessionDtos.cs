@@ -400,6 +400,16 @@ public class SessionDto
     public List<LinkedSessionInfo>? LinkedSessions { get; set; }
 
     public DateTime CreatedAt { get; set; }
+
+    /// <summary>
+    /// What the price change did to this session's still-owed bills — set ONLY on the update
+    /// response when <c>SessionAmount</c> actually changed, so the app can report "N students
+    /// re-priced from {month}" instead of moving figures silently. Null everywhere else, and
+    /// omitted from the JSON when null so the (hot, paginated) session LIST response is unchanged.
+    /// Additive — older clients ignore it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Payment.SessionRepriceSummary? PriceReconcile { get; set; }
 }
 
 /// <summary>

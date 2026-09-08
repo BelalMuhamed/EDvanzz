@@ -482,13 +482,25 @@ public class StudentsByStatusResponse
     public string MonthLabel { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public decimal TotalCollected { get; set; }
-    public decimal MonthAmount { get; set; }
-    public decimal AmountPerMonth { get; set; }
+
     /// <summary>
-    /// Full-set expected revenue for this scope: Σ over every in-scope student of their monthly
-    /// rate (custom override ?? session default), including students with no month period yet.
-    /// The session-detail screen renders this directly so per-student custom amounts are reflected
-    /// (instead of the client computing session-default × student-count).
+    /// What this scope is actually BILLED for the month: Σ (AmountDue − Forgiven) over the in-scope
+    /// students' periods that START in it. Same basis as the tracking card's "Expected · This month",
+    /// so the per-session figures sum back to the card. This is the authoritative "expected revenue"
+    /// for the session screen — <see cref="ExpectedAmount"/> answers a different question.
+    /// </summary>
+    public decimal MonthAmount { get; set; }
+
+    public decimal AmountPerMonth { get; set; }
+
+    /// <summary>
+    /// The same scope priced at TODAY's rates: Σ over every in-scope student of their monthly rate
+    /// (custom override ?? session default), including students with no month period yet.
+    /// <para>Deliberately NOT the same number as <see cref="MonthAmount"/>: a bill is written once,
+    /// when the month is generated, so a later price change, a custom amount set after a month was
+    /// already billed, or a month a student has no bill for all make the two diverge. The session
+    /// screen shows the billed figure and surfaces this one beside it when they differ, instead of
+    /// silently picking one.</para>
     /// </summary>
     public decimal ExpectedAmount { get; set; }
     public decimal TotalUnpaidAmount { get; set; }

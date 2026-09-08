@@ -205,6 +205,41 @@ public class ProrationReconcileSummary
 }
 
 /// <summary>
+/// What a SESSION PRICE change did to the session's still-owed bills: how many were re-priced to the
+/// new amount and how many were deliberately kept. Monthly bills re-price over EVERY still-owed month
+/// — arrears included — matching what a per-student price change already does; per-class bills only
+/// from next month, since a class already delivered was delivered at the old price. The change must be
+/// VISIBLE rather than silent: the app reports it instead of leaving the teacher to wonder why a figure
+/// moved (or did not). Attached to the session-update response; null on every other session response.
+/// </summary>
+public class SessionRepriceSummary
+{
+    /// <summary>Still-owed bills rewritten to the new session amount.</summary>
+    public int Repriced { get; set; }
+
+    /// <summary>
+    /// Past/current bills skipped because money was already settled against them — cash collected or
+    /// an amount forgiven. That money is ground truth and re-pricing below it would silently swallow
+    /// the surplus.
+    /// </summary>
+    public int KeptPaid { get; set; }
+
+    /// <summary>Joining months skipped because a person set the amount by hand (sticky override).</summary>
+    public int KeptManual { get; set; }
+
+    /// <summary>Distinct students whose bills changed.</summary>
+    public int StudentsAffected { get; set; }
+
+    /// <summary>
+    /// Earliest month actually re-priced — what the app names in "N bills updated from {month}".
+    /// Null when nothing was re-priced. A calendar day (always first-of-month for a monthly bill), so
+    /// it is a <c>DateOnly</c> on the wire (<c>"2026-09-01"</c>) and never an instant a client could
+    /// shift (§11b).
+    /// </summary>
+    public DateOnly? EarliestMonth { get; set; }
+}
+
+/// <summary>
 /// What the billing-start reconcile did (or WOULD do, on a dry run) when a teacher's
 /// <c>BillingStartDate</c> is set or changed: obligations dated before the billing floor are removed
 /// (never-paid, no-cash, non-manual rows only), months the floor newly allows are backfilled, and each

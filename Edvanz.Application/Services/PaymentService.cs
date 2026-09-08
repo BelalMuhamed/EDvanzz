@@ -962,8 +962,8 @@ public class PaymentService : IPaymentService
             // every screen (user-confirmed scope 2026-08-17: ALL unpaid periods, not just current +
             // future). The repo predicate only selects Unpaid/PartiallyPaid periods, so fully-paid/
             // overpaid months are never rewritten — what the student already settled at the old price
-            // stands. DateTime.MinValue = no lower month bound (this differs from the SESSION-amount
-            // change, OnSessionAmountChangedAsync, which stays future-only by design).
+            // stands. DateTime.MinValue = no lower month bound (this still reaches FURTHER BACK than the
+            // SESSION-amount change, OnSessionAmountChangedAsync, which starts at the current month).
             var periods = await _unitOfWork.PaymentsRepo
                 .GetRepriceableStudentPeriodsAsync(dto.TeacherId, dto.TeacherStudentId, DateTime.MinValue);
 
@@ -1032,30 +1032,59 @@ public class PaymentService : IPaymentService
     // ══════════════════════════════════════════════
 
     /// <inheritdoc />
-    public async Task<Result<bool>> OnSessionAmountChangedAsync(
+    public async Task<Result<SessionRepriceSummary>> OnSessionAmountChangedAsync(
         long teacherId, long sessionId, decimal newAmount)
     {
-        // Future (next month onward, teacher-local) still-owed periods of the session, excluding
-        // custom-priced students (BR-PAY-003). Runs on the CALLER's transaction (SessionService) —
-        // it only mutates + SaveChanges, never opens/commits its own boundary (§5.2).
+        // Still-owed periods of the session, excluding custom-priced students (BR-PAY-003) and
+        // carried/moved debt (excluded in the repo predicate). Runs on the CALLER's transaction
+        // (SessionService) — it only mutates + SaveChanges, never opens/commits its own boundary (§5.2).
+        //
+        // WINDOW (changed 2026-09-08): Monthly bills re-price over EVERY still-owed month — past
+        // arrears, the current month and all future months — which is exactly the scope a per-student
+        // price change already uses (SetCustomAmountAsync passes DateTime.MinValue), so the two
+        // price-change paths finally behave the same. The old next-month-only rule left this month's
+        // bills at the old price while every rate-based screen already showed the new one, so the
+        // payment card's "Expected" silently disagreed with students × session amount — with no hint in
+        // the app that the change started next month. PerSession (per-class) bills keep the next-month
+        // rule: a class already delivered was delivered at the old price.
         var localDate = _timeZoneService.GetTeacherLocalDate(teacherId);
         var nextMonthStart = new DateTime(localDate.Year, localDate.Month, 1).AddMonths(1);
 
+        var summary = new SessionRepriceSummary();
+
         var periods = await _unitOfWork.PaymentsRepo
-            .GetRepriceableSessionDefaultPeriodsAsync(teacherId, sessionId, nextMonthStart);
+            .GetRepriceableSessionDefaultPeriodsAsync(
+                teacherId, sessionId, DateTime.MinValue, nextMonthStart);
         if (periods.Count == 0)
-            return Result<bool>.Success(true, _localizer, PaymentConstants.Messages.Success);
+            return Result<SessionRepriceSummary>.Success(summary, _localizer, PaymentConstants.Messages.Success);
 
         // Re-price in place, tallying counter deltas per affected student.
         var deltas = new Dictionary<long, (decimal Outstanding, int Paid, int Unpaid)>();
+        DateTime? earliestRepriced = null;
         foreach (var p in periods)
         {
             if (p.TeacherStudentId is null) continue;
             // Sticky joining-month override (REQ-PAY-021/022): a human-set first-month amount is never
             // clobbered by a later session-price change.
-            if (p.IsProrationManual) continue;
+            if (p.IsProrationManual) { summary.KeptManual++; continue; }
+            // A past/current bill someone has already settled against — cash collected, or an amount
+            // forgiven — is ground truth and is left exactly as it stands. RecomputePeriodStatus has no
+            // Overpaid branch, so re-pricing such a month below what is already settled would close it
+            // and silently swallow the surplus (and RepricePeriodInPlace's outstanding delta does not
+            // model ForgivenAmount). Scoped to the months this change newly reaches — FUTURE months
+            // keep their long-standing behaviour bit for bit.
+            if (p.PeriodStart < nextMonthStart
+                && (p.AmountPaid > 0m || (p.ForgivenAmount ?? 0m) > 0m))
+            {
+                summary.KeptPaid++;
+                continue;
+            }
+
             var d = RepricePeriodInPlace(p, newAmount);
             await _unitOfWork.PaymentsRepo.UpdatePaymentPeriodAsync(p);
+            summary.Repriced++;
+            if (earliestRepriced is null || p.PeriodStart < earliestRepriced)
+                earliestRepriced = p.PeriodStart;
 
             var acc = deltas.GetValueOrDefault(p.TeacherStudentId.Value);
             deltas[p.TeacherStudentId.Value] = (
@@ -1064,6 +1093,9 @@ public class PaymentService : IPaymentService
                 acc.Unpaid + d.UnpaidPeriodsDelta);
         }
 
+        summary.StudentsAffected = deltas.Count;
+        summary.EarliestMonth = earliestRepriced is DateTime e ? DateOnly.FromDateTime(e) : null;
+
         // Flush period rewrites so the per-student consecutive-unpaid recompute reads fresh state.
         await _unitOfWork.SaveChangesAsync();
 
@@ -1071,7 +1103,7 @@ public class PaymentService : IPaymentService
             await ApplyRepriceCounterDeltasAsync(teacherId, studentId, d.Outstanding, d.Paid, d.Unpaid);
 
         await _unitOfWork.SaveChangesAsync();
-        return Result<bool>.Success(true, _localizer, PaymentConstants.Messages.Success);
+        return Result<SessionRepriceSummary>.Success(summary, _localizer, PaymentConstants.Messages.Success);
     }
 
     /// <inheritdoc />
