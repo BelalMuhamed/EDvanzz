@@ -98,7 +98,11 @@ public interface IPaymentService
     /// REQ-PAY-016: Overrides session default for all future collections.
     /// BR-PAY-003: Not affected by session amount changes.
     /// </summary>
-    Task<Result<bool>> SetCustomAmountAsync(SetCustomAmountDto dto);
+    /// <returns>
+    /// How many still-owed bills were rewritten and how many were kept back as a hand-set joining
+    /// month, so the app can report the outcome instead of leaving a frozen month unexplained.
+    /// </returns>
+    Task<Result<CustomAmountRepriceSummary>> SetCustomAmountAsync(SetCustomAmountDto dto);
 
     // ══════════════════════════════════════════════
     // UNPAID OVERVIEW (REQ-PAY-028 through 033)

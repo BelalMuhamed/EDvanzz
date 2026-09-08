@@ -205,6 +205,24 @@ public class ProrationReconcileSummary
 }
 
 /// <summary>
+/// What a PER-STUDENT price change (custom amount set or cleared) did to that student's still-owed
+/// bills. Same purpose as <see cref="SessionRepriceSummary"/>: the app reports the outcome instead of
+/// leaving the teacher to wonder why one month did not follow the new price. There is no KeptPaid here
+/// — the re-price predicate already excludes settled months.
+/// </summary>
+public class CustomAmountRepriceSummary
+{
+    /// <summary>Still-owed bills rewritten to the new per-student amount.</summary>
+    public int Repriced { get; set; }
+
+    /// <summary>
+    /// Joining months skipped because a person set the amount by hand (sticky override). Surfaced so a
+    /// frozen bill announces itself at the moment it diverges from the student's new price.
+    /// </summary>
+    public int KeptManual { get; set; }
+}
+
+/// <summary>
 /// What a SESSION PRICE change did to the session's still-owed bills: how many were re-priced to the
 /// new amount and how many were deliberately kept. Monthly bills re-price over EVERY still-owed month
 /// — arrears included — matching what a per-student price change already does; per-class bills only

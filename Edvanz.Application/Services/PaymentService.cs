@@ -932,23 +932,24 @@ public class PaymentService : IPaymentService
     }
 
     /// <inheritdoc />
-    public async Task<Result<bool>> SetCustomAmountAsync(SetCustomAmountDto dto)
+    public async Task<Result<CustomAmountRepriceSummary>> SetCustomAmountAsync(SetCustomAmountDto dto)
     {
         // PAY-4: a custom price must be non-negative. 0 is allowed and marks the student as
         // exempt / not paying (free/scholarship) — surfaced as the "Not paying" label. A NEGATIVE
         // amount would drive negative dues and negative expected revenue, so it is still rejected.
         // Null clears the override and reverts the student to the session default.
         if (dto.CustomAmount.HasValue && dto.CustomAmount.Value < 0m)
-            return Result<bool>.Failure(
+            return Result<CustomAmountRepriceSummary>.Failure(
                 _localizer, PaymentConstants.Messages.PaymentCustomAmountInvalid,
                 HttpStatusCode.UnprocessableEntity);
 
         var counter = await _unitOfWork.PaymentsRepo
             .GetPaymentCounterAsync(dto.TeacherId, dto.TeacherStudentId);
         if (counter is null)
-            return Result<bool>.Failure(
+            return Result<CustomAmountRepriceSummary>.Failure(
                 _localizer, PaymentConstants.Messages.StudentNotFound, HttpStatusCode.NotFound);
 
+        var summary = new CustomAmountRepriceSummary();
         bool ownsTransaction = !_unitOfWork.HasActiveTransaction;
         if (ownsTransaction)
             await _unitOfWork.BeginTransactionAsync();
@@ -976,8 +977,10 @@ public class PaymentService : IPaymentService
                 foreach (var p in periods)
                 {
                     // Sticky joining-month override (REQ-PAY-021/022): a human-set first-month amount is
-                    // never clobbered by a later custom-rate change.
-                    if (p.IsProrationManual) continue;
+                    // never clobbered by a later custom-rate change. COUNTED, never silent — an
+                    // unreported skip is how a joining month ends up frozen at a price the student no
+                    // longer pays (prod 2026-09-08, teacher 171).
+                    if (p.IsProrationManual) { summary.KeptManual++; continue; }
 
                     // Custom set → that amount; cleared (null) → revert to the period's own session default.
                     decimal newBase;
@@ -1002,6 +1005,7 @@ public class PaymentService : IPaymentService
 
                     var d = RepricePeriodInPlace(p, newBase);
                     await _unitOfWork.PaymentsRepo.UpdatePaymentPeriodAsync(p);
+                    summary.Repriced++;
                     outstandingDelta += d.OutstandingDelta;
                     paidDelta += d.PaidPeriodsDelta;
                     unpaidDelta += d.UnpaidPeriodsDelta;
@@ -1024,7 +1028,8 @@ public class PaymentService : IPaymentService
             throw;
         }
 
-        return Result<bool>.Success(true, _localizer, PaymentConstants.Messages.CustomAmountSetSuccess);
+        return Result<CustomAmountRepriceSummary>.Success(
+            summary, _localizer, PaymentConstants.Messages.CustomAmountSetSuccess);
     }
 
     // ══════════════════════════════════════════════
@@ -1510,6 +1515,10 @@ public class PaymentService : IPaymentService
             }
         }
 
+        // What the system prices this month at on its own — the "reset to automatic" target.
+        decimal autoTarget = ClampJoiningAmount(
+            suggestion.Applicable ? suggestion.SuggestedAmount : fullBase, fullBase);
+
         // Validate the requested amount BEFORE opening a transaction.
         decimal targetDue;
         bool manual;
@@ -1522,12 +1531,18 @@ public class PaymentService : IPaymentService
                 return Result<ProrationUpdateResultDto>.Failure(
                     _localizer, PaymentConstants.Messages.ProrationAmountExceedsFull, HttpStatusCode.UnprocessableEntity);
             targetDue = ClampJoiningAmount(SnapToNearest5(amount.Value), fullBase);
-            manual = true;
+            // A hand-set joining amount is STICKY — every automatic re-price afterwards (session
+            // price, per-student price, the settings reconcile) skips it — so only a genuinely
+            // DIFFERENT number earns that. Saving the figure the system already suggests is a no-op
+            // confirmation, and freezing the month for it is a trap: prod 2026-09-08 (teacher 171)
+            // confirmed 80 → 80 on two students, then set their monthly price to 50, and the joining
+            // month silently stayed at 80 while every later month followed. Same value ⇒ no override.
+            manual = targetDue != autoTarget;
         }
         else
         {
             // Clear the override → revert to the method's auto suggestion (full when Manual/off).
-            targetDue = ClampJoiningAmount(suggestion.Applicable ? suggestion.SuggestedAmount : fullBase, fullBase);
+            targetDue = autoTarget;
             manual = false;
         }
 
@@ -1570,11 +1585,12 @@ public class PaymentService : IPaymentService
                 (nowPaid ? 1 : 0) - (oldPaid ? 1 : 0),
                 (nowPaid ? -1 : 0) - (oldPaid ? -1 : 0));
 
-            // Audit (transparency §2b): EVERY manual set records actor + suggested + set as a
+            // Audit (transparency §2b): EVERY explicit set records actor + suggested + set as a
             // proration-decision log (null transaction, period-linked) — rev 2 made this unconditional
             // so "set by hand · by whom · when" is always attributable, even when the human happened to
-            // confirm the system's own number.
-            if (manual)
+            // confirm the system's own number (which, since 2026-09-08, no longer makes it sticky —
+            // the action is still recorded, it simply leaves the month auto-managed).
+            if (amount.HasValue)
             {
                 await _unitOfWork.PaymentsRepo.AddPaymentEditLogAsync(new PaymentEditLog
                 {

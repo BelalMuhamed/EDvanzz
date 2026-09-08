@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
@@ -1116,12 +1116,15 @@ public class PaymentScreenService : IPaymentScreenService
 
         // Proration transparency: batch the anchor-period info (prorated amount + fraction) and the
         // ENROLLMENT date (earliest assignment — rev 2: attendance never prices the joining month) so a
-        // prorated row can justify its reduced amount without an N+1. Only students with a PRORATED
-        // anchor are enriched.
+        // prorated row can justify its reduced amount without an N+1. Enriched for a PRORATED anchor
+        // OR a hand-set one: a joining month fixed by hand is STICKY (every automatic re-price skips
+        // it) even when it is priced at the full month and even when proration is switched OFF, so the
+        // row must be able to say "set by hand" — otherwise the frozen bill is invisible while it
+        // quietly diverges from the student's current price (prod 2026-09-08, teacher 171).
         var anchorInfo = (await _unitOfWork.PaymentsRepo
                 .GetAnchorPeriodInfoByStudentIdsAsync(
                     teacherId, rows.Select(r => r.TeacherStudentId).Distinct().ToList()))
-            .Where(a => a.IsProRated)
+            .Where(a => a.IsProRated || a.IsProrationManual)
             .ToDictionary(a => a.StudentId);
         var anchorJoinDates = anchorInfo.Count > 0
             ? await _unitOfWork.PaymentsRepo
@@ -1148,7 +1151,9 @@ public class PaymentScreenService : IPaymentScreenService
             bool joinedAtIsFirstAttendance = false;
             if (anchorInfo.TryGetValue(r.TeacherStudentId, out var anc) && anc.SessionId is not null)
             {
-                isProrated = true;
+                // Taken from the anchor row, never assumed: the set now also carries hand-set anchors
+                // that are priced at the FULL month (IsProRated false).
+                isProrated = anc.IsProRated;
                 isProrationManual = anc.IsProrationManual;
                 proratedFraction = anc.ProRatedFraction;
                 proratedAmount = anc.AmountDue;
@@ -1399,6 +1404,38 @@ public class PaymentScreenService : IPaymentScreenService
                     response.IsProrationManual = suggestion.IsManualOverride;
                     response.ProrationSetByName = suggestion.SetByName;
                     response.ProrationSetAt = suggestion.SetAt;
+                }
+            }
+
+            // HAND-SET, PRORATION OFF. ComputeProrationSuggestionAsync returns Applicable=false the
+            // moment proration is disabled, so the block above never runs and a joining month someone
+            // fixed by hand became invisible — while still STICKY: every later automatic re-price
+            // skips it, so the bill silently diverges from the student's current price (prod
+            // 2026-09-08, teacher 171 — two students hand-set at 80, later priced 50, September stuck
+            // at 80 with nothing on any screen to say so). The flags ride along on the unpaid-months
+            // projection (no extra query); the actor/date audit is read ONLY when one is actually
+            // hand-set.
+            if (!response.IsProrationManual
+                && row.UnpaidMonths.FirstOrDefault(m => m.IsProrationAnchorMonth && m.IsProrationManual)
+                    is { } handSet)
+            {
+                var handSetIdStr = handSet.PeriodId.ToString(CultureInfo.InvariantCulture);
+                var handSetDto = response.UnpaidMonthsBreakdown
+                    .FirstOrDefault(m => m.PeriodId == handSetIdStr);
+                var audit = await _unitOfWork.PaymentsRepo
+                    .GetLatestProrationEditForPeriodAsync(teacherId, handSet.PeriodId);
+                string? setByName = audit?.SetByUserId is long auditUid
+                    ? await _unitOfWork.Users.GetUserFullNameByUserIdAsync(auditUid)
+                    : null;
+
+                response.IsProrationManual = true;
+                response.ProrationSetByName = setByName;
+                response.ProrationSetAt = audit?.SetAt;
+                if (handSetDto is not null)
+                {
+                    handSetDto.IsProrationManual = true;
+                    handSetDto.ProrationSetByName = setByName;
+                    handSetDto.ProrationSetAt = audit?.SetAt;
                 }
             }
         }

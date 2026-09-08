@@ -215,6 +215,18 @@ public sealed class CollectLookupUnpaidMonth
     public bool IsProRated { get; set; }
     /// <summary>The proration fraction (e.g. 0.6685) when prorated; 1.0 otherwise.</summary>
     public decimal ProRatedFraction { get; set; }
+
+    /// <summary>True when this row IS the enrollment's joining (anchor) month.</summary>
+    public bool IsProrationAnchorMonth { get; set; }
+
+    /// <summary>
+    /// True when a human fixed this joining month's amount by hand, which makes it STICKY: every
+    /// automatic re-price (session price, per-student price, proration reconcile) skips it. Carried
+    /// on the projection so the collect screen can surface "set by hand" even when proration is
+    /// turned OFF — with proration off no suggestion is computed, and the flag used to be invisible
+    /// while still silently freezing the bill.
+    /// </summary>
+    public bool IsProrationManual { get; set; }
 }
 
 /// <summary>

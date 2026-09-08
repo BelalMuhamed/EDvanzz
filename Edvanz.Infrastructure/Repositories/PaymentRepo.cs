@@ -1595,7 +1595,9 @@
                             PeriodStart = p.PeriodStart,
                             Remaining = p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m),
                             IsProRated = p.IsProRated,
-                            ProRatedFraction = p.ProRatedFraction
+                            ProRatedFraction = p.ProRatedFraction,
+                            IsProrationAnchorMonth = p.IsProrationAnchorMonth,
+                            IsProrationManual = p.IsProrationManual
                         }
                     })
                     .AsNoTracking()
@@ -2024,7 +2026,9 @@
                     PeriodStart = p.PeriodStart,
                     Remaining = p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m),
                     IsProRated = p.IsProRated,
-                    ProRatedFraction = p.ProRatedFraction
+                    ProRatedFraction = p.ProRatedFraction,
+                    IsProrationAnchorMonth = p.IsProrationAnchorMonth,
+                    IsProrationManual = p.IsProrationManual
                 })
                 .ToListAsync();
 
@@ -2051,7 +2055,9 @@
                         PeriodStart = p.PeriodStart,
                         Remaining = p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m),
                         IsProRated = p.IsProRated,
-                        ProRatedFraction = p.ProRatedFraction
+                        ProRatedFraction = p.ProRatedFraction,
+                        IsProrationAnchorMonth = p.IsProrationAnchorMonth,
+                        IsProrationManual = p.IsProrationManual
                     })
                     .FirstOrDefaultAsync();
             }
