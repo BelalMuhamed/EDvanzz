@@ -75,7 +75,8 @@ public interface IPaymentScreenService
     /// endpoint honoured the instants, so the day-insight cards disagreed with the list they sit above.</param>
     Task<Result<CollectionsSummaryResponse>> GetCollectionsSummaryAsync(
         long teacherId, DateTime? from, DateTime? to, string? asOfMonth, long? sessionId = null,
-        long? collectedByUserId = null, bool? exactRange = null);
+        long? collectedByUserId = null, bool? exactRange = null,
+        string? search = null, bool includeAdjustments = true);
 
     /// <summary>
     /// Withdrawal/reset history for one assistant's wallet (newest first) — the record of every

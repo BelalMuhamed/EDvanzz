@@ -363,7 +363,16 @@
             if (sessionId.HasValue)
                 query = query.Where(p => p.SessionId == sessionId.Value);
 
-            return await query.OrderBy(p => p.PeriodSequence).ToListAsync();
+            // CHRONOLOGICAL, with PeriodSequence only as the tie-break (2026-09-09). PeriodSequence
+            // restarts per session, so for a student who has been in more than one session ordering by
+            // it alone interleaved the months - "oldest debt first" silently was not oldest-first, and
+            // the note-required check walked a different prefix than the one the collect engine fills.
+            // Same months, same set; only the order changes, and it changes to the one every caller
+            // already assumes.
+            return await query
+                .OrderBy(p => p.PeriodStart)
+                .ThenBy(p => p.PeriodSequence)
+                .ToListAsync();
         }
 
         /// <inheritdoc />

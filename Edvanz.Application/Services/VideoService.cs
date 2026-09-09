@@ -146,6 +146,19 @@ public sealed class VideoService : IVideoService
         {
             await _unitOfWork.VideoAssetsRepo.AddScopesAsync(rowsToAdd);
             await _unitOfWork.SaveChangesAsync();
+
+            // AUDIENCE CHANGE announces too (2026-09-09). Publishing to group A notified A; adding
+            // group B a week later notified NOBODY, because every announce site keyed on the video
+            // becoming visible and it already was. The students who just gained access were exactly
+            // the ones never told. Safe to fan out over the WHOLE audience: the job re-resolves
+            // recipients at run time and the per-recipient idempotency check (plus the unique index)
+            // means everyone already notified is skipped, so only the new group receives anything.
+            // Only when students can actually see it - a Draft or future-dated video announces on
+            // publish, not here.
+            bool visibleToStudents = video.Status == VideoStatus.Published
+                && (video.PublishDate is null || video.PublishDate <= DateTime.UtcNow);
+            if (visibleToStudents)
+                AnnounceVideoPublished(teacherId, videoAssetId, video.PublishDate);
         }
 
         // Dedup student count across the FULL scope set (existing + new).
@@ -381,7 +394,16 @@ public sealed class VideoService : IVideoService
         // announces anything. Re-saving an already-published video must stay silent.
         var before = await _unitOfWork.VideoAssetsRepo
             .GetVideoByIdAndTeacherAsync(videoAssetId, teacherId);
-        bool wasPublished = before is not null && before.Status == VideoStatus.Published;
+        // VISIBLE TO STUDENTS, not merely Published (2026-09-09) - the same predicate UpdateVideoAsync
+        // uses and the same one the student queries and the file gate use. Reading Status alone meant a
+        // video Published FOR A FUTURE DATE counted as already published, so releasing it early (status
+        // Published + publishDate null, which SetVideoStatusAsync writes as NULL) announced NOTHING at
+        // the moment it went live - while the delayed job queued for the original date still fired days
+        // later, telling students about "new" content they had already had. Announcing here also makes
+        // that stale job harmless: the per-recipient idempotency check finds everyone already notified.
+        bool wasVisibleToStudents = before is not null
+            && before.Status == VideoStatus.Published
+            && (before.PublishDate is null || before.PublishDate <= DateTime.UtcNow);
 
         bool updated = await _unitOfWork.VideoAssetsRepo.SetVideoStatusAsync(
             videoAssetId, teacherId, request.Status, request.PublishDate);
@@ -390,7 +412,7 @@ public sealed class VideoService : IVideoService
             return Result<bool>.Failure(
                 _localizer, VideoConstants.Messages.VideoNotFound, HttpStatusCode.NotFound);
 
-        if (!wasPublished && request.Status == VideoStatus.Published)
+        if (!wasVisibleToStudents && request.Status == VideoStatus.Published)
             AnnounceVideoPublished(teacherId, videoAssetId, request.PublishDate);
 
         return Result<bool>.Success(true, _localizer, VideoConstants.Messages.VideoStatusUpdated);
@@ -1124,6 +1146,8 @@ public sealed class VideoService : IVideoService
         // Runtime module-active gate — students have no `module` JWT claim.
         var moduleGate = await CheckModuleActiveAsync<PaginatedResponse<List<StudentVideoListItemDto>>>(teacherId);
         if (moduleGate is not null) return moduleGate;
+        var visibilityGate = await CheckStudentVisibilityAsync<PaginatedResponse<List<StudentVideoListItemDto>>>(teacherId);
+        if (visibilityGate is not null) return visibilityGate;
 
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
             .GetVisibleVideosForStudentAsync(teacherId, teacherStudentId, request.Page, request.PageSize);
@@ -1139,6 +1163,8 @@ public sealed class VideoService : IVideoService
     {
         var moduleGate = await CheckModuleActiveAsync<PaginatedResponse<List<StudentVideoListItemDto>>>(teacherId);
         if (moduleGate is not null) return moduleGate;
+        var visibilityGate = await CheckStudentVisibilityAsync<PaginatedResponse<List<StudentVideoListItemDto>>>(teacherId);
+        if (visibilityGate is not null) return visibilityGate;
 
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
             .GetVisibleVideosForStudentInUnitAsync(
@@ -1179,6 +1205,8 @@ public sealed class VideoService : IVideoService
     {
         var moduleGate = await CheckModuleActiveAsync<List<StudentVideoUnitDto>>(teacherId);
         if (moduleGate is not null) return moduleGate;
+        var visibilityGate = await CheckStudentVisibilityAsync<List<StudentVideoUnitDto>>(teacherId);
+        if (visibilityGate is not null) return visibilityGate;
 
         var units = await _unitOfWork.VideoAssetsRepo
             .GetStudentVisibleUnitsAsync(teacherId, teacherStudentId);
@@ -1564,6 +1592,28 @@ public sealed class VideoService : IVideoService
         bool active = await _unitOfWork.ModuleTeacherRepo!
             .IsModuleActiveAsync(teacherId, VideoConstants.ModuleName);
         if (active) return null;
+
+        return Result<T>.Failure(
+            _localizer, VideoConstants.Messages.ModuleDeactivated, HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// The teacher's STUDENT-VISIBILITY switch for Videos, enforced on the student-facing reads
+    /// themselves (2026-09-09).
+    ///
+    /// The flag used to gate only the home tile and the dashboard projection, so turning Videos off
+    /// removed the button while the list route still answered 200 with the full content to anyone
+    /// calling it directly - the teacher believed the material was hidden and it was not. The
+    /// content-publish job started honouring the same flag, which left the system saying two different
+    /// things: no announcement, still readable. One switch now governs the tile, the list and the push.
+    ///
+    /// FAIL OPEN on a missing configuration row, matching the student home aggregate and the
+    /// notification job - a teacher with no config has never had anything hidden.
+    /// </summary>
+    private async Task<Result<T>?> CheckStudentVisibilityAsync<T>(long teacherId)
+    {
+        var config = await _unitOfWork.Users.GetConfigurationByTeacherIdAsync(teacherId);
+        if (config?.StudentVisibilityVideo ?? true) return null;
 
         return Result<T>.Failure(
             _localizer, VideoConstants.Messages.ModuleDeactivated, HttpStatusCode.Forbidden);

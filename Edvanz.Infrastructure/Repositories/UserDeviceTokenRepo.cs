@@ -35,6 +35,24 @@ public class UserDeviceTokenRepo
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<long, IReadOnlyList<UserDeviceToken>>>
+        GetActiveTokensForUsersAsync(IReadOnlyCollection<long> userIds)
+    {
+        if (userIds is null || userIds.Count == 0)
+            return new Dictionary<long, IReadOnlyList<UserDeviceToken>>();
+
+        // Same index as the single-user read (IX_UserDeviceTokens_UserId_IsActive); one round trip.
+        var rows = await _context.Set<UserDeviceToken>()
+            .AsNoTracking()
+            .Where(t => userIds.Contains(t.UserId) && t.IsActive)
+            .ToListAsync();
+
+        return rows
+            .GroupBy(t => t.UserId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<UserDeviceToken>)g.ToList());
+    }
+
+    /// <inheritdoc />
     public async Task InsertTokenAsync(UserDeviceToken token)
     {
         await _context.Set<UserDeviceToken>().AddAsync(token);

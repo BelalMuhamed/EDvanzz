@@ -69,9 +69,11 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
 
         // A unit has no publish state of its own — it is a boundary, not a grant
         // (see VideoUnit's remarks). Its card badge is DERIVED from how many
-        // member videos are actually live, so the two counts below use the exact
-        // same predicate as VideoAssetRepo.GetStudentVisibleUnitsAsync: the
-        // teacher's badge and what students can open can never disagree.
+        // member videos are actually live. NOTE: these counts apply the VIDEO-level half of
+        // VideoAssetRepo.GetStudentVisibleUnitsAsync only - that query ALSO requires a matching
+        // VideoScopes row, so a unit whose videos are published but scoped to nobody still counts as
+        // Published here while no student can open it. Deliberately left as-is for now (reviewed
+        // 2026-09-08); the previous claim that the two "can never disagree" was not true.
         var utcNow = DateTime.UtcNow;
 
         // Rolled-up child aggregates via correlated subqueries — one round
@@ -107,8 +109,13 @@ public class VideoUnitRepo : GenericRepo<VideoUnit, long>, IVideoUnitRepo
                 // (Attached VideoAttachment FileObjects; a video "has a quiz"
                 // when a VideoExam exists for it), so the unit chip and the
                 // videos inside it can never disagree.
+                // TENANT-NARROWED FIRST (2026-09-09). FileObjects is the account-wide file registry and
+                // grows with every upload of every category; filtering only on Category + Status left
+                // this correlated EXISTS scanning the whole table once per unit row, on a screen
+                // teachers keep open. FileObject carries a denormalized TeacherId for exactly this.
                 AttachmentCount = _context.Set<FileObject>()
-                    .Count(f => f.Category == FileCategory.VideoAttachment
+                    .Count(f => f.TeacherId == teacherId
+                             && f.Category == FileCategory.VideoAttachment
                              && f.Status == FileStatus.Attached
                              && f.VideoAssetId != null
                              && _context.VideoAssetUnits.Any(au =>

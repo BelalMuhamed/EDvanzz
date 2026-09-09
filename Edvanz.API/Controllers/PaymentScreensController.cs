@@ -129,7 +129,14 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
         [FromQuery] long? sessionId = null,
         // Optional: scope the money/activity/departure figures to one collector (the drill-in
         // screens' day strip). Omitted → account-wide, byte-identical to the old behaviour.
-        [FromQuery] long? collectedByUserId = null)
+        [FromQuery] long? collectedByUserId = null,
+        // The day-insight card MUST answer for the same window AND the same filters as the ledger
+        // rows it sits above. The app has always sent these two; this action never declared them, and
+        // [ApiController] drops unknown query parameters silently - no 400, no effect - so searching
+        // for one student narrowed the list to one row while the card above still described the whole
+        // day ("12 collections - 3,400 EGP"). Defaults reproduce the old behaviour exactly.
+        [FromQuery] string? search = null,
+        [FromQuery] bool includeAdjustments = true)
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
@@ -152,7 +159,8 @@ public sealed class PaymentScreensController : ModuleSixApiBaseController
         }
 
         var result = await _screenService.GetCollectionsSummaryAsync(
-            teacherId.Value, fromDate, toDate, asOfMonth, sessionId, collectedByUserId, exactRange);
+            teacherId.Value, fromDate, toDate, asOfMonth, sessionId, collectedByUserId, exactRange,
+            search, includeAdjustments);
         return ToResponse(result);
     }
 

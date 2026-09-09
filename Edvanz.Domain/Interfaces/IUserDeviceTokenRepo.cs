@@ -30,6 +30,18 @@ public interface IUserDeviceTokenRepo : IGenericRepo<UserDeviceToken, long>
     Task<IReadOnlyList<UserDeviceToken>> GetActiveTokensForUserAsync(long userId);
 
     /// <summary>
+    /// Active tokens for MANY users in one query, grouped by user id. A user with no active device is
+    /// simply absent from the dictionary.
+    ///
+    /// Exists for content-publish fan-out: announcing a video scoped to a 200-student session used to
+    /// issue one SELECT per recipient, on one of only four Hangfire workers, holding a scoped
+    /// DbContext and its SQL connection for the whole run - on the same queue that carries
+    /// subscription reminders and payment-rejection pushes.
+    /// </summary>
+    Task<IReadOnlyDictionary<long, IReadOnlyList<UserDeviceToken>>> GetActiveTokensForUsersAsync(
+        IReadOnlyCollection<long> userIds);
+
+    /// <summary>
     /// Inserts a new device-token row. Called when register-fcm-token sees no
     /// existing match for (UserId, FcmToken).
     /// SaveChanges is NOT called here — the caller owns the unit of work.

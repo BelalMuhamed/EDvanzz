@@ -394,7 +394,15 @@ public class PaymentScreenService : IPaymentScreenService
         // Stable per-row day key (invariant "yyyy-MM-dd" of the raw CollectedAt) — the client groups the
         // ledger into day sections by this string, matching the collections date-filter's day notion.
         foreach (var r in all)
-            r.DayKey = (r.CollectedAt ?? DateTime.MinValue).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            // TEACHER-LOCAL day, not the raw UTC instant (2026-09-09). CollectedAt is UTC, so cash taken
+            // at 01:00 Cairo on the 8th is 2026-09-07T22:00Z and filed under a "7 September" header -
+            // directly above a row rendering 08 Sep 01:00, and above a receipt whose LocalCollectedAt
+            // also says the 8th. The filter was self-consistent, so nothing was lost; the heading simply
+            // contradicted the rows it headed. A business day is the tenant's (CLAUDE.md 11b).
+            r.DayKey = (r.CollectedAt is DateTime ca
+                    ? _timeZoneService.ConvertUtcToLocal(ca)
+                    : DateTime.MinValue)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // ── Order: newest DAY first; within a day money-OUT (negative) before collections; newest time
         // first as the final tiebreak. This replaces the old "all negatives, then all positives" layout. ──
@@ -533,7 +541,13 @@ public class PaymentScreenService : IPaymentScreenService
                 if (!long.TryParse(r.StudentId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sid)
                     || !anchorInfo.TryGetValue(sid, out var anc))
                     continue;
-                r.ProrationJoinedAt = joinDates.TryGetValue(sid, out var jd) ? jd : anc.PeriodStart;
+                // Teacher-LOCAL join day. AssignedAt is stamped DateTime.UtcNow, so a student assigned
+                // at 01:30 Cairo carries 2026-09-07T22:30Z and rendered as "Joined 7 Sep" - a day before
+                // the day the price was actually computed from, and a day off from the collect editor,
+                // which is the one surface that already converts (ResolveJoinDateInAnchorMonth).
+                r.ProrationJoinedAt = joinDates.TryGetValue(sid, out var jd)
+                    ? _timeZoneService.ConvertUtcToLocal(jd).Date
+                    : anc.PeriodStart;
                 r.ProrationClassesTotal = anc.ClassesTotal;
                 r.ProrationClassesBilled = anc.ClassesBilled;
                 r.ProratedFirstMonthAmount = anc.AmountDue;
@@ -577,7 +591,8 @@ public class PaymentScreenService : IPaymentScreenService
     /// <inheritdoc />
     public async Task<Result<CollectionsSummaryResponse>> GetCollectionsSummaryAsync(
         long teacherId, DateTime? from, DateTime? to, string? asOfMonth, long? sessionId = null,
-        long? collectedByUserId = null, bool? exactRange = null)
+        long? collectedByUserId = null, bool? exactRange = null,
+        string? search = null, bool includeAdjustments = true)
     {
         var repo = _unitOfWork.PaymentsRepo;
 
@@ -660,13 +675,19 @@ public class PaymentScreenService : IPaymentScreenService
             // collector who took 23) — the "Omar ezz" customer report. The per-month status buckets
             // below stay account-wide: they are not collector-attributable and the collector screen
             // does not render them.
+            // search + includeAdjustments follow the LIST (2026-09-09): the strip is rendered directly
+            // above the rows, so it must answer for the same filtered set, not the whole day.
             var (collectorTxs, collectorTxCount) = await repo.GetTransactionsByDateRangePagedAsync(
                 teacherId, startDate, endInclusiveTick, sessionId, collectorUid,
-                page: 1, pageSize: int.MaxValue);
-            var collectorRefunds = (await repo.GetCollectorRefundsInRangeAsync(
-                    teacherId, collectorUid, startDate, endExclusive, includeDeleted: false))
-                .Where(r => r.RefundAmount > 0m)
-                .ToList();
+                page: 1, pageSize: int.MaxValue, search: search);
+            // "Collections only" (includeAdjustments=false) hides refunds from the list, so the strip
+            // must stop counting them too - otherwise it reports money out that the list denies.
+            var collectorRefunds = includeAdjustments
+                ? (await repo.GetCollectorRefundsInRangeAsync(
+                        teacherId, collectorUid, startDate, endExclusive, includeDeleted: false))
+                    .Where(r => r.RefundAmount > 0m)
+                    .ToList()
+                : new List<CollectorRefundRow>();
             var collectorDepartures = await repo.GetDepartureRefundsByDateRangeAsync(
                 teacherId, startDate, endExclusive, collectorUid);
 
@@ -713,6 +734,15 @@ public class PaymentScreenService : IPaymentScreenService
 
         // ── Per-collector — true range; enriched with name + role exactly like GetTrackingAsync. ──
         var collectors = await repo.GetDashboardPerCollectorAsync(teacherId, startDate, toInclusive);
+        // OWN-SCOPE (2026-09-09). The controller forces collectedByUserId to the caller for an
+        // ASSISTANT (AssistantScopeUserId), but GetDashboardPerCollectorAsync takes no collector
+        // predicate, so this block still returned EVERY collector - each one's name, exact collected
+        // amount and transaction count, including the tutor's own - to any assistant holding
+        // Payment.ViewCollectorSummary. The app never rendered it, so it was invisible in use while
+        // being plainly readable on the wire. 758aa6e scoped the rows and the money block and missed
+        // this one. Teacher/SuperAdmin callers pass null here and are unaffected.
+        if (collectedByUserId.HasValue)
+            collectors = collectors.Where(c => c.UserId == collectedByUserId.Value).ToList();
         var collectorUserIds = collectors.Select(c => c.UserId).Distinct().ToList();
         var names = collectorUserIds.Count > 0
             ? await _unitOfWork.Users.GetUserFullNamesByUserIdsAsync(collectorUserIds)
@@ -1112,7 +1142,10 @@ public class PaymentScreenService : IPaymentScreenService
         foreach (var (studentId, anc) in anchorInfo)
         {
             if (anc.SessionId is null) continue;
-            var joinedAt = joinDates.TryGetValue(studentId, out var ad) ? ad : anc.PeriodStart;
+            // Teacher-LOCAL join day - see EnrichProrationTransparencyAsync.
+            var joinedAt = joinDates.TryGetValue(studentId, out var ad)
+                ? _timeZoneService.ConvertUtcToLocal(ad).Date
+                : anc.PeriodStart;
             // IsProrated comes from the anchor row, not a hardcoded true: a hand-set anchor priced at
             // the FULL month now reaches this point and must not claim to be prorated.
             result[studentId] = new ProrationEnrichment(
@@ -1212,8 +1245,9 @@ public class PaymentScreenService : IPaymentScreenService
                 proratedAmount = anc.AmountDue;
                 prorationClassesTotal = anc.ClassesTotal;
                 prorationClassesBilled = anc.ClassesBilled;
+                // Teacher-LOCAL join day - see EnrichProrationTransparencyAsync.
                 joinedAt = anchorJoinDates.TryGetValue(r.TeacherStudentId, out var ad)
-                    ? ad
+                    ? _timeZoneService.ConvertUtcToLocal(ad).Date
                     : anc.PeriodStart;
             }
 
@@ -1883,6 +1917,12 @@ public class PaymentScreenService : IPaymentScreenService
         // carried-forward transfer balance, or a partly-paid month were all rejected as "custom"
         // and 400'd. Strictly widening: the cheap multiple check still runs first and anything it
         // accepted is untouched; the extra query only happens on amounts that used to be rejected.
+        // Hoisted out of the loop: the window is the same for every student in the batch, so resolving
+        // the teacher's local date per item meant a timezone lookup per row for no reason.
+        var noteCheckLocalDate = _timeZoneService.GetTeacherLocalDate(teacherId);
+        var noteCheckAdvanceCapEnd =
+            new DateTime(noteCheckLocalDate.Year, noteCheckLocalDate.Month, 1).AddMonths(2).AddDays(-1);
+
         foreach (var item in students)
         {
             if (EffectiveItemNote(item, note) is not null) continue;
@@ -1895,10 +1935,8 @@ public class PaymentScreenService : IPaymentScreenService
             // Same window and ordering the collect engine itself fills: arrears through the current
             // local month plus at most one month in advance, oldest first. Reading it here keeps the
             // "does this need a note?" answer aligned with what the engine will actually do.
-            var localDate = _timeZoneService.GetTeacherLocalDate(teacherId);
-            var advanceCapEnd = new DateTime(localDate.Year, localDate.Month, 1).AddMonths(2).AddDays(-1);
             var owedPeriods = await _unitOfWork.PaymentsRepo
-                .GetUnpaidPeriodsThroughAsync(teacherId, item.StudentId, null, advanceCapEnd);
+                .GetUnpaidPeriodsThroughAsync(teacherId, item.StudentId, null, noteCheckAdvanceCapEnd);
             var remainings = owedPeriods
                 .Select(p => p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m))
                 .ToList();

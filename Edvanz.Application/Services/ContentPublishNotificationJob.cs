@@ -208,11 +208,17 @@ public class ContentPublishNotificationJob : IContentPublishNotificationJob
 
         // Pushes come AFTER the rows are durable: a delivered push whose inbox row was
         // rolled back would leave a notification the student can never open again.
+        // Every recipient's devices in ONE query instead of one SELECT per recipient. The rest of this
+        // feature was carefully batched (languages, dedupe, audience); this loop was the exception.
+        var tokensByUser = await _unitOfWork.UserDeviceTokensRepo
+            .GetActiveTokensForUsersAsync(rendered.Select(r => r.UserId).Distinct().ToList());
+
         foreach (var (userId, title, body) in rendered)
         {
             try
             {
-                var tokens = await _unitOfWork.UserDeviceTokensRepo.GetActiveTokensForUserAsync(userId);
+                if (!tokensByUser.TryGetValue(userId, out var tokens))
+                    continue;
                 foreach (var token in tokens)
                 {
                     var result = await _pushSender.SendAsync(
