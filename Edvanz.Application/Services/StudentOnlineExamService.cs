@@ -89,6 +89,10 @@ public class StudentOnlineExamService : IStudentOnlineExamService
                 Subject = subjectName,
                 ExamDate = DateOnly.FromDateTime(localStart),
                 ExamTime = TimeOnly.FromDateTime(localStart),
+                // The real instant, NOT the truncated local pair — the client's entry gate has
+                // to be judged against this or it drifts by the device's offset from Cairo.
+                // Same value the take screen already sends, so the two screens agree.
+                StartDateTime = exam.StartDateTime,
                 Duration = exam.EndDateTime - exam.StartDateTime,
                 QuestionsCount = exam.Questions.Count,
                 ExamDegree = exam.Questions.Sum(q => q.Degree),

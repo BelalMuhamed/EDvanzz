@@ -75,10 +75,19 @@ public sealed class StudentVideosController : ApiBaseController
     // WHAT IT DOES:
     //   Paged list of videos the calling student can access from the named
     //   teacher. Includes the student's own watch state (HasOpened,
-    //   LastOpenedAt) via the analytics LEFT JOIN.
+    //   LastOpenedAt, watchStatus) via the analytics LEFT JOIN.
+    //
+    //   FILTERS (both optional):
+    //     search       - title contains, Arabic-normalized
+    //     watchStatus  - NotStarted | InProgress | Completed; one rule
+    //                    (VideoWatchRules) shared with the row badge and the
+    //                    home tile counts, so a chip returns exactly the rows
+    //                    the student sees badged that way
+    //     unwatchedOnly - LEGACY alias for watchStatus=NotStarted, kept for the
+    //                    shipped app; watchStatus wins when both are sent
     //
     // SAMPLE REQUEST:
-    //   GET /api/videos/student/teachers/42?page=1&pageSize=20
+    //   GET /api/videos/student/teachers/42?page=1&pageSize=20&watchStatus=InProgress
     //
     // ══════════════════════════════════════════════════════════════════════
     [HttpGet("teachers/{teacherId:long}")]

@@ -160,12 +160,21 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// Caller (service) supplies this from the <c>StudentTeacherLink</c>
     /// resolution; the repo trusts it.</param>
     /// <param name="teacherStudentId">The student whose access is checked.</param>
+    /// <param name="search">Optional title filter, Arabic-normalized like the teacher's list.</param>
+    /// <param name="watchStatus">
+    /// Optional watch-state filter. Null = every visible video. Otherwise keeps only rows whose
+    /// state under <see cref="Helpers.VideoWatchRules"/> equals the requested one, so the filter
+    /// and the row badge can never disagree. Applied before the count, so the total describes the
+    /// filtered set.
+    /// </param>
     Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentAsync(
             long teacherId,
             long teacherStudentId,
             int page,
-            int pageSize);
+            int pageSize,
+            string? search = null,
+            VideoWatchStatus? watchStatus = null);
 
     /// <summary>
     /// Same visible-video resolution as <see cref="GetVisibleVideosForStudentAsync"/>, but
@@ -173,10 +182,9 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// query path with the un-filtered list so the two never disagree. Batched (no N+1).
     /// </summary>
     /// <param name="search">Optional title filter, Arabic-normalized like the teacher's list.</param>
-    /// <param name="unwatchedOnly">
-    /// When true, keeps only videos with no watch time — the same rule behind the row's
-    /// "Not started" badge, so the filter and the badge always agree. Applied before the
-    /// count, so the total describes the filtered set.
+    /// <param name="watchStatus">
+    /// Optional watch-state filter — same three states and same rule
+    /// (<see cref="Helpers.VideoWatchRules"/>) as the un-filtered list above.
     /// </param>
     Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentInUnitAsync(
@@ -186,7 +194,7 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
             int page,
             int pageSize,
             string? search = null,
-            bool unwatchedOnly = false);
+            VideoWatchStatus? watchStatus = null);
 
     /// <summary>
     /// The units (V3) a student can see under a teacher — those containing at least one video
@@ -204,8 +212,25 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// <see cref="GetVisibleVideosForStudentAsync"/> (Published + PublishDate gate, Session /
     /// SessionGroup scope union) so the count can never disagree with what the student's own video
     /// list shows — just a COUNT instead of a paged projection, since the caller only needs totals.
+    ///
+    /// <para>"Seen" means STARTED (the student has watch time on it), not "an analytics row
+    /// exists" — a row is written with 0 seconds on the first play report, so the old row-exists
+    /// test counted a video the student never actually watched. Thin delegate to
+    /// <see cref="GetStudentVideoWatchCountsAsync"/> so this and the tri-state breakdown are the
+    /// same numbers.</para>
     /// </summary>
     Task<(int Total, int Seen)> GetStudentVideoSeenCountsAsync(long teacherId, long teacherStudentId);
+
+    /// <summary>
+    /// Tri-state rollup for one student under one teacher over the SAME visible-video scope
+    /// predicate as <see cref="GetVisibleVideosForStudentAsync"/>: how many videos are visible,
+    /// and how many fall in each <see cref="VideoWatchStatus"/> under
+    /// <see cref="Helpers.VideoWatchRules"/> (SQL mirror). The three buckets always sum to
+    /// <c>Total</c>, so the student home Videos tile and the list filter can never disagree.
+    /// Three COUNTs, no materialized rows.
+    /// </summary>
+    Task<(int Total, int NotStarted, int InProgress, int Completed)> GetStudentVideoWatchCountsAsync(
+        long teacherId, long teacherStudentId);
 
     /// <summary>
     /// The owning teacher's subject for the student video-list <c>Subject</c> column:

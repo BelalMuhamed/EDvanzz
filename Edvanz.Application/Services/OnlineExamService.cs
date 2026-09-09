@@ -953,7 +953,7 @@ public class OnlineExamService : IOnlineExamService
     // T5s — MANUAL STATUS (block/unblock; lazy-creates report; returns stats)
     // ══════════════════════════════════════════════════════════════════════
     public async Task<Result<OnlineExamStatsDto>> UpdateStudentStatusAsync(
-        long teacherId, long onlineExamId, long teacherStudentId, UpdateOnlineExamStudentStatusRequest request)
+        long teacherId, long actingUserId, long onlineExamId, long teacherStudentId, UpdateOnlineExamStudentStatusRequest request)
     {
         var exam = await _unitOfWork.OnlineExamsRepo.GetByIdAndTeacherAsync(onlineExamId, teacherId);
         if (exam is null)
@@ -984,6 +984,11 @@ public class OnlineExamService : IOnlineExamService
                 Score = 0,
                 Percentage = 0,
                 CreateAt = utcNow,
+                // Who blocked, and when. PreviousStatus stays null: there was no report row,
+                // so there is no earlier status to record.
+                StatusChangedByUserId = actingUserId,
+                StatusChangedAt = utcNow,
+                PreviousStatus = null,
             };
             await _unitOfWork.StudentOnlineExamReportsRepo.AddAsync(report);
             await _unitOfWork.SaveChangesAsync();
@@ -992,6 +997,14 @@ public class OnlineExamService : IOnlineExamService
         {
             if (report.SubmittedAt is not null)
                 return Result<OnlineExamStatsDto>.Failure(_localizer, OnlineExamConstants.Messages.CannotBlockFinalizedReport, HttpStatusCode.Conflict);
+
+            // Accountability (assistants can hold OnlineExam permissions, so an anti-cheat
+            // block on a LIVE exam can be lifted by several different people): record who,
+            // when, and what it was before — set on the same entity, so it lands in the SAME
+            // SaveChanges as the status change and can never drift out of step with it.
+            report.PreviousStatus = report.Status;
+            report.StatusChangedByUserId = actingUserId;
+            report.StatusChangedAt = utcNow;
 
             report.Status = request.Status;
             report.UpdatedAt = utcNow;

@@ -17,14 +17,35 @@ public sealed class OnlineExamStudentListItemDto
     /// </summary>
     public string Subject { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The exam's start as the teacher's LOCAL (Africa/Cairo) calendar day and wall-clock time —
+    /// for DISPLAY only. Do not rebuild the entry gate from this pair: recombining it and
+    /// comparing against the device clock is off by the device's offset from Cairo, which kept
+    /// offering "Enter" for hours after the window closed on a UTC+1 phone and hid a live exam on
+    /// a UTC+5 one. Gate on <see cref="StartDateTime"/> instead.
+    /// </summary>
     public DateOnly ExamDate { get; set; }
+
+    /// <inheritdoc cref="ExamDate"/>
     public TimeOnly ExamTime { get; set; }
+
+    /// <summary>
+    /// The exam's real start INSTANT in UTC (serialized with a <c>Z</c> by the global
+    /// <c>UtcDateTimeJsonConverter</c>) — the same value the take screen's
+    /// <c>OnlineExamTakeScreenDto.StartDateTime</c> carries, so the list and the take screen can
+    /// no longer disagree about whether the window is open. This is the ONLY field the client
+    /// should compute the entry gate from; the window ends at this instant plus
+    /// <see cref="Duration"/>. Additive — an older app build ignores it and keeps its old
+    /// (device-clock) behaviour.
+    /// </summary>
+    public DateTime StartDateTime { get; set; }
 
     /// <summary>
     /// O3: the exam WINDOW length (<c>EndDateTime − StartDateTime</c>), a convenience for the
     /// client. This is NOT a per-attempt time allowance and there is intentionally NO
     /// server-side per-attempt timer / DurationMinutes field — the countdown is driven entirely
-    /// by the window (start = <see cref="ExamDate"/>+<see cref="ExamTime"/>; end = start + this),
+    /// by the window (start = <see cref="StartDateTime"/>; end = start + this — NOT the local
+    /// <see cref="ExamDate"/>+<see cref="ExamTime"/> pair, which is display-only),
     /// and the window End is the single hard stop (enforced by submission-window validation and
     /// §3.5 auto-finalize). Leaving and reopening never resets time.
     /// </summary>

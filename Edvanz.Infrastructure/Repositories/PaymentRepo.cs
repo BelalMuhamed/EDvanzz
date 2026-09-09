@@ -204,14 +204,18 @@
             return (items, totalCount);
         }
 
-        /// <inheritdoc />
-        public async Task<(IReadOnlyList<PaymentTransaction> Items, int TotalCount)>
-            GetTransactionsByDateRangePagedAsync(
-                long teacherId,
-                DateTime startDate, DateTime endDate,
-                long? sessionId, long? collectedByUserId,
-                int page, int pageSize,
-                string? search = null)
+        /// <summary>
+        /// The shared filter behind every collections-ledger read: non-deleted transactions for the
+        /// teacher in [startDate, endDate], optionally narrowed to one session, one collector, and a
+        /// student name/code term (case- AND Arabic-variant-insensitive, provider-side via
+        /// dbo.ArabicNormalize). Kept in one place so the paged rows, the slice, the day totals and
+        /// the count can never drift apart — a row visible in the list must be counted in the totals.
+        /// </summary>
+        private IQueryable<PaymentTransaction> BuildTransactionsInRangeQuery(
+            long teacherId,
+            DateTime startDate, DateTime endDate,
+            long? sessionId, long? collectedByUserId,
+            string? search)
         {
             var query = _context.PaymentTransactions
                 .Where(t => t.TeacherId == teacherId
@@ -223,19 +227,56 @@
                 query = query.Where(t => t.SessionId == sessionId.Value);
             if (collectedByUserId.HasValue)
                 query = query.Where(t => t.CollectedByUserId == collectedByUserId.Value);
-            // Optional filter over the denormalized student name/code (case- AND
-            // Arabic-variant-insensitive, provider-side via dbo.ArabicNormalize).
+
             var term = string.IsNullOrWhiteSpace(search) ? null : ArabicTextNormalizer.Normalize(search.Trim());
             if (!string.IsNullOrEmpty(term))
                 query = query.Where(t =>
                     (t.StudentName != null && EF.Functions.Like(DbSearch.ArabicNormalize(t.StudentName), $"%{term}%"))
                     || (t.StudentCode != null && EF.Functions.Like(DbSearch.ArabicNormalize(t.StudentCode), $"%{term}%")));
 
-            int totalCount = await query.CountAsync();
-            var items = await query
+            return query;
+        }
+
+        /// <inheritdoc />
+        public async Task<(IReadOnlyList<PaymentTransaction> Items, int TotalCount)>
+            GetTransactionsByDateRangePagedAsync(
+                long teacherId,
+                DateTime startDate, DateTime endDate,
+                long? sessionId, long? collectedByUserId,
+                int page, int pageSize,
+                string? search = null)
+        {
+            int totalCount = await BuildTransactionsInRangeQuery(
+                    teacherId, startDate, endDate, sessionId, collectedByUserId, search)
+                .CountAsync();
+
+            var items = await GetTransactionsByDateRangeSliceAsync(
+                teacherId, startDate, endDate, sessionId, collectedByUserId,
+                skip: (page - 1) * pageSize, take: pageSize, search: search);
+
+            return (items, totalCount);
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<PaymentTransaction>> GetTransactionsByDateRangeSliceAsync(
+            long teacherId,
+            DateTime startDate, DateTime endDate,
+            long? sessionId, long? collectedByUserId,
+            int skip, int take,
+            string? search = null)
+        {
+            if (take <= 0) return System.Array.Empty<PaymentTransaction>();
+            if (skip < 0) skip = 0;
+
+            return await BuildTransactionsInRangeQuery(
+                    teacherId, startDate, endDate, sessionId, collectedByUserId, search)
+                // Id is the tiebreak, not decoration: two collections can share a CollectedAt to the
+                // tick, and without it SQL Server may order them differently between two page reads,
+                // which duplicates one row and drops another as the caller scrolls.
                 .OrderByDescending(t => t.CollectedAt)
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
+                .ThenByDescending(t => t.Id)
+                .Skip(skip)
+                .Take(take)
                 // Live session name for the collections ledger; the transaction's own SessionName is
                 // a collection-time snapshot that goes stale when the session is renamed.
                 .Include(t => t.Session)
@@ -247,8 +288,71 @@
                 .AsSplitQuery()
                 .AsNoTracking()
                 .ToListAsync();
+        }
 
-            return (items, totalCount);
+        /// <inheritdoc />
+        public async Task<IReadOnlyList<(DateTime Day, decimal Collected, decimal Deducted, int CollectionsCount, int RowCount)>>
+            GetTransactionDayTotalsAsync(
+                long teacherId,
+                DateTime startDate, DateTime endDate,
+                long? sessionId, long? collectedByUserId,
+                string? search = null,
+                int localOffsetHours = 0)
+        {
+            // Grouped on the TEACHER-LOCAL calendar day, via a constant hour shift applied inside
+            // the GROUP BY (DATEADD). CollectedAt is UTC, so grouping on its raw .Date filed a 01:00
+            // Cairo collection under the PREVIOUS day - and once the ledger rows started carrying a
+            // teacher-local DayKey (2026-09-09), a client matching dayKey -> dateKey stopped finding
+            // its bucket at all. A header and the rows it heads must key identically.
+            //
+            // The offset is a CONSTANT for the whole call, resolved by the caller from the range.
+            // Egypt shifts an hour twice a year, so a range spanning a DST boundary buckets the far
+            // side an hour out: that can only move a collection made within an hour of local midnight,
+            // on one of two days a year, under the neighbouring header. No money moves - only which
+            // header it sits under. Per-row zone conversion is not expressible in a GROUP BY, and
+            // pulling every row back to bucket in memory is the unbounded read this method removes.
+            var rows = await BuildTransactionsInRangeQuery(
+                    teacherId, startDate, endDate, sessionId, collectedByUserId, search)
+                .GroupBy(t => t.CollectedAt.AddHours(localOffsetHours).Date)
+                .Select(g => new
+                {
+                    Day = g.Key,
+                    Collected = g.Sum(t => t.AmountPaid > 0m ? t.AmountPaid : 0m),
+                    // A collection row never carries a negative amount today; summed defensively so
+                    // the day net stays correct if one ever does, mirroring the ledger's sign rules.
+                    Deducted = g.Sum(t => t.AmountPaid < 0m ? -t.AmountPaid : 0m),
+                    CollectionsCount = g.Count(t => t.AmountPaid > 0m),
+                    RowCount = g.Count()
+                })
+                .AsNoTracking()
+                .ToListAsync();
+
+            return rows
+                .Select(r => (r.Day, r.Collected, r.Deducted, r.CollectionsCount, r.RowCount))
+                .OrderByDescending(r => r.Day)
+                .ToList();
+        }
+
+        /// <inheritdoc />
+        public async Task<(decimal Gross, int TransactionCount, int DistinctPayingStudents)>
+            GetTransactionRangeAggregatesAsync(
+                long teacherId,
+                DateTime startDate, DateTime endDate,
+                long? sessionId, long? collectedByUserId,
+                string? search = null)
+        {
+            var query = BuildTransactionsInRangeQuery(
+                teacherId, startDate, endDate, sessionId, collectedByUserId, search);
+
+            decimal gross = await query.SumAsync(t => (decimal?)t.AmountPaid) ?? 0m;
+            int count = await query.CountAsync();
+            int students = await query
+                .Where(t => t.TeacherStudentId != null)
+                .Select(t => t.TeacherStudentId!.Value)
+                .Distinct()
+                .CountAsync();
+
+            return (gross, count, students);
         }
 
         /// <inheritdoc />
@@ -1714,74 +1818,89 @@
                     || (ts.StudentCode != null && DbSearch.ArabicNormalize(ts.StudentCode).Contains(searchLower)));
             }
             var assignedStudentIds = assignedQuery.Select(ts => ts.Id);
-
-            // Everything is judged THROUGH the selected month � periods that start after the
-            // month end (pre-generated future months) are excluded from every bucket and total.
-            var withPeriods = _context.PaymentPeriods
-                .Where(p => p.TeacherId == teacherId && p.TeacherStudentId.HasValue
-                    && assignedStudentIds.Contains(p.TeacherStudentId!.Value)
-                    && p.PeriodStart <= monthEnd);
-
-            // Per-student classification by the earliest outstanding period (same rule as
-            // GetStudentPaymentStatusCountsAsync). One row per student with an outstanding period.
-            var earliestOutstanding = withPeriods
-                .Where(p => p.PaymentStatus != PaymentStatus.Paid)
-                .GroupBy(p => p.TeacherStudentId!.Value)
-                .Select(g => new
-                {
-                    StudentId = g.Key,
-                    IsProRated = g.OrderBy(p => p.PeriodSequence).First().IsProRated
-                });
-
-            // Materialize the target student-id set for the requested status (bounded to the
-            // teacher's students; avoids deeply-nested subqueries the provider may not translate).
-            //
-            // B1: when status is null, the caller wants the WHOLE (assigned) scope with each
-            // student carrying its own status — so target every scope student (including those
-            // with no period yet, who read as "paid") and stamp each row's status below.
-            List<long> targetIds;
+            // The target student set stays an IQueryable (one SQL subquery), never a materialized
+            // id list. Materializing it re-injected an N-element IN (...) parameter list into five
+            // further queries on every refresh, page and debounced search keystroke of the
+            // session-detail screen: a teacher with 800 assigned students spent 4,000 parameters
+            // against SQL Server's 2,100-per-statement ceiling and forced a plan recompile per
+            // distinct list arity. Each leg is written with correlated EXISTS / TOP-1 subqueries -
+            // the shape used throughout this repo - rather than the previous GroupBy projection,
+            // because a GroupBy whose selector calls .First() does not compose into an outer
+            // subquery. The classification itself is unchanged (see each leg).
+            IQueryable<long> targetStudentIds;
             if (status is null)
             {
-                targetIds = await assignedStudentIds.ToListAsync();
+                // B1: the caller wants the WHOLE (assigned) scope with each student carrying its own
+                // status - including students with no period yet, who read as "paid". Stamped below.
+                targetStudentIds = assignedStudentIds;
             }
             else if (string.Equals(status, "paid", StringComparison.OrdinalIgnoreCase))
             {
-                var allIds = await withPeriods.Select(p => p.TeacherStudentId!.Value).Distinct().ToListAsync();
-                var outstanding = (await earliestOutstanding.Select(e => e.StudentId).ToListAsync()).ToHashSet();
-                targetIds = allIds.Where(id => !outstanding.Contains(id)).ToList();
+                // Caught up: has an obligation through the selected month AND nothing outstanding on
+                // it. An assigned student with NO period row at all is deliberately excluded here
+                // (documented edge case: the "paid" headcount may exceed this list by one per such
+                // student) - same as the previous allIds-minus-outstanding set difference.
+                targetStudentIds = assignedQuery
+                    .Where(ts => _context.PaymentPeriods.Any(p => p.TeacherId == teacherId
+                            && p.TeacherStudentId == ts.Id
+                            && p.PeriodStart <= monthEnd)
+                        && !_context.PaymentPeriods.Any(p => p.TeacherId == teacherId
+                            && p.TeacherStudentId == ts.Id
+                            && p.PeriodStart <= monthEnd
+                            && p.PaymentStatus != PaymentStatus.Paid))
+                    .Select(ts => ts.Id);
             }
             else if (string.Equals(status, "prorated", StringComparison.OrdinalIgnoreCase))
             {
-                targetIds = await earliestOutstanding.Where(e => e.IsProRated).Select(e => e.StudentId).ToListAsync();
+                // The earliest outstanding period (lowest PeriodSequence) is prorated. The nullable
+                // projection is what carries "no outstanding period at all" as NULL, so `== true`
+                // selects exactly the students the earlier GroupBy(...).First() produced.
+                targetStudentIds = assignedQuery
+                    .Where(ts => _context.PaymentPeriods
+                        .Where(p => p.TeacherId == teacherId
+                            && p.TeacherStudentId == ts.Id
+                            && p.PeriodStart <= monthEnd
+                            && p.PaymentStatus != PaymentStatus.Paid)
+                        .OrderBy(p => p.PeriodSequence)
+                        .Select(p => (bool?)p.IsProRated)
+                        .FirstOrDefault() == true)
+                    .Select(ts => ts.Id);
             }
-
             else if (string.Equals(status, "partial", StringComparison.OrdinalIgnoreCase))
             {
                 // "Part Paid" chip: students with a period IN the requested month that is
-                // partially settled (0 < AmountPaid < AmountDue). Month-scoped by design �
+                // partially settled (0 < AmountPaid < AmountDue). Month-scoped by design -
                 // the screen header is month-relative ("monthly collected (march)").
-                targetIds = await _context.PaymentPeriods
-                    .Where(p => p.TeacherId == teacherId
-                        && p.TeacherStudentId.HasValue
-                        && assignedStudentIds.Contains(p.TeacherStudentId!.Value)
+                targetStudentIds = assignedQuery
+                    .Where(ts => _context.PaymentPeriods.Any(p => p.TeacherId == teacherId
+                        && p.TeacherStudentId == ts.Id
                         && p.PeriodStart >= monthStart && p.PeriodStart <= monthEnd
-                        && p.PaymentStatus == PaymentStatus.PartiallyPaid)
-                    .Select(p => p.TeacherStudentId!.Value)
-                    .Distinct()
-                    .ToListAsync();
+                        && p.PaymentStatus == PaymentStatus.PartiallyPaid))
+                    .Select(ts => ts.Id);
             }
             else // unpaid
             {
-                targetIds = await earliestOutstanding.Where(e => !e.IsProRated).Select(e => e.StudentId).ToListAsync();
+                // Has an outstanding period whose earliest instalment is NOT prorated. `== false`
+                // (not `!= true`) is what keeps students with no outstanding period - NULL - out.
+                targetStudentIds = assignedQuery
+                    .Where(ts => _context.PaymentPeriods
+                        .Where(p => p.TeacherId == teacherId
+                            && p.TeacherStudentId == ts.Id
+                            && p.PeriodStart <= monthEnd
+                            && p.PaymentStatus != PaymentStatus.Paid)
+                        .OrderBy(p => p.PeriodSequence)
+                        .Select(p => (bool?)p.IsProRated)
+                        .FirstOrDefault() == false)
+                    .Select(ts => ts.Id);
             }
 
-            int totalCount = targetIds.Count;
+            int totalCount = await targetStudentIds.CountAsync();
 
             // Group aggregates: month-scoped collected/expected, plus total outstanding.
             var groupMonthPeriods = _context.PaymentPeriods
                 .Where(p => p.TeacherId == teacherId
                     && p.TeacherStudentId.HasValue
-                    && targetIds.Contains(p.TeacherStudentId!.Value)
+                    && targetStudentIds.Contains(p.TeacherStudentId!.Value)
                     && p.PeriodStart >= monthStart && p.PeriodStart <= monthEnd);
 
             decimal groupCollected = await groupMonthPeriods.SumAsync(p => (decimal?)p.AmountPaid) ?? 0m;
@@ -1797,7 +1916,7 @@
             decimal groupUnpaid = await _context.PaymentPeriods
                 .Where(p => p.TeacherId == teacherId
                     && p.TeacherStudentId.HasValue
-                    && targetIds.Contains(p.TeacherStudentId!.Value)
+                    && targetStudentIds.Contains(p.TeacherStudentId!.Value)
                     && p.PeriodStart <= monthEnd
                     && p.PaymentStatus != PaymentStatus.Paid)
                 .SumAsync(p => (decimal?)(p.AmountDue - p.AmountPaid - (p.ForgivenAmount ?? 0m))) ?? 0m;
@@ -1805,22 +1924,21 @@
             // Full-set expected revenue: each in-scope student's MONTHLY RATE — their custom override
             // (StudentPaymentCounter.CustomPaymentAmount) or the session default — summed over EVERY
             // targeted student, including those with no month period yet (absent from groupExpected).
-            // Reuses the already-materialized targetIds and the SAME per-student rate projection as the
-            // paged rows below; drives the session-detail "expected revenue" so a per-student custom
-            // amount is reflected instead of the session default × student-count the client used to use.
-            var expectedRates = await _context.TeacherStudents
-                .Where(ts => ts.TeacherId == teacherId && targetIds.Contains(ts.Id))
-                .Select(ts => (decimal?)(
+            // Reuses the SAME target subquery and per-student rate projection as the paged rows below;
+            // drives the session-detail "expected revenue" so a per-student custom amount is reflected
+            // instead of the session default × student-count the client used to use. SUMMED IN SQL: the
+            // old form pulled one decimal per in-scope student across the wire just to add them up.
+            decimal groupExpectedRate = await _context.TeacherStudents
+                .Where(ts => ts.TeacherId == teacherId && targetStudentIds.Contains(ts.Id))
+                .SumAsync(ts => (decimal?)(
                     (_context.StudentPaymentCounters
                         .Where(c => c.TeacherId == teacherId && c.TeacherStudentId == ts.Id)
                         .Select(c => c.CustomPaymentAmount).FirstOrDefault())
-                    ?? (ts.Session != null ? ts.Session.SessionAmount : 0m)))
-                .ToListAsync();
-            decimal groupExpectedRate = expectedRates.Sum(r => r ?? 0m);
+                    ?? (ts.Session != null ? ts.Session.SessionAmount : 0m))) ?? 0m;
 
             // Page the students (name order) with their month amounts + counter fields.
             var items = await _context.TeacherStudents
-                .Where(ts => ts.TeacherId == teacherId && targetIds.Contains(ts.Id))
+                .Where(ts => ts.TeacherId == teacherId && targetStudentIds.Contains(ts.Id))
                 .OrderBy(ts => ts.StudentName)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -1931,12 +2049,34 @@
             // status filter, every row already matches it and the service uses the requested status.
             if (status is null && items.Count > 0)
             {
-                var outstandingMap = (await earliestOutstanding.ToListAsync())
-                    .ToDictionary(e => e.StudentId, e => e.IsProRated);
+                // Scoped to the PAGE's students, not the whole scope: the map is only ever read for
+                // the rows just fetched, so classifying every assigned student (all of them, on this
+                // leg) was work whose result was thrown away. The bounded id list is the same
+                // page-sized IN (...) the other per-page batch reads in this file use.
+                var pageIds = items.Select(r => r.TeacherStudentId).ToList();
+                var outstandingMap = (await _context.TeacherStudents
+                        .Where(ts => ts.TeacherId == teacherId && pageIds.Contains(ts.Id))
+                        .Select(ts => new
+                        {
+                            ts.Id,
+                            // NULL = no outstanding period through the month = caught up ("paid").
+                            EarliestIsProRated = _context.PaymentPeriods
+                                .Where(p => p.TeacherId == teacherId
+                                    && p.TeacherStudentId == ts.Id
+                                    && p.PeriodStart <= monthEnd
+                                    && p.PaymentStatus != PaymentStatus.Paid)
+                                .OrderBy(p => p.PeriodSequence)
+                                .Select(p => (bool?)p.IsProRated)
+                                .FirstOrDefault()
+                        })
+                        .AsNoTracking()
+                        .ToListAsync())
+                    .ToDictionary(x => x.Id, x => x.EarliestIsProRated);
                 foreach (var row in items)
                 {
-                    row.Status = outstandingMap.TryGetValue(row.TeacherStudentId, out bool isProRated)
-                        ? (isProRated ? "prorated" : "unpaid")
+                    row.Status = outstandingMap.TryGetValue(row.TeacherStudentId, out bool? isProRated)
+                        && isProRated.HasValue
+                        ? (isProRated.Value ? "prorated" : "unpaid")
                         : "paid";
                 }
             }
@@ -2452,6 +2592,51 @@
                 .Where(ts => ts.TeacherId == teacherId && ts.Id == teacherStudentId && ts.Session != null)
                 .Select(ts => ts.Session!.SessionAmount)
                 .FirstOrDefaultAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyDictionary<long, decimal>> GetStudentMonthlyRatesAsync(
+            long teacherId, IReadOnlyCollection<long> teacherStudentIds)
+        {
+            if (teacherStudentIds is null || teacherStudentIds.Count == 0)
+                return new Dictionary<long, decimal>();
+
+            // Same rule as the single-student form, evaluated per row in ONE query: the custom
+            // per-student override (BR-PAY-003) wins, else the current session's amount, else 0.
+            // Distinct() so a student repeated in the caller's batch costs nothing extra.
+            var ids = teacherStudentIds.Distinct().ToList();
+            var rows = await _context.TeacherStudents
+                .Where(ts => ts.TeacherId == teacherId && ids.Contains(ts.Id))
+                .Select(ts => new
+                {
+                    ts.Id,
+                    Rate = (_context.StudentPaymentCounters
+                            .Where(c => c.TeacherId == teacherId && c.TeacherStudentId == ts.Id)
+                            .Select(c => c.CustomPaymentAmount)
+                            .FirstOrDefault())
+                        ?? (ts.Session != null ? ts.Session.SessionAmount : 0m)
+                })
+                .AsNoTracking()
+                .ToListAsync();
+
+            return rows.ToDictionary(r => r.Id, r => r.Rate);
+        }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyCollection<long>> GetActiveStudentIdsForTeacherAsync(
+            long teacherId, IReadOnlyCollection<long> teacherStudentIds)
+        {
+            if (teacherStudentIds is null || teacherStudentIds.Count == 0)
+                return System.Array.Empty<long>();
+
+            // The global query filter already excludes IsDeleted == true, so this is exactly the
+            // population GetActiveByIdAndTeacherAsync resolves one id at a time.
+            var ids = teacherStudentIds.Distinct().ToList();
+            // No AsNoTracking(): the projection is a scalar (long), which EF never tracks anyway.
+            return await _context.TeacherStudents
+                .Where(ts => ts.TeacherId == teacherId && ids.Contains(ts.Id))
+                .Select(ts => ts.Id)
+                .ToListAsync();
         }
 
         // ----------------------------------------------

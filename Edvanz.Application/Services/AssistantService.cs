@@ -579,6 +579,9 @@ namespace Edvanz.Application.Services
             // Suspending sets DeletedAt (below), which hides the assistant from the active-collector
             // set — so, exactly like a hard delete (SoftDeleteAssistantAsync), it must not strand
             // cash she is still holding. The tutor must hand over / withdraw the wallet first.
+            // It deliberately does NOT set RemovedAt: a suspension is temporary, and the payment
+            // module's "removed collector" rules key on RemovedAt so a suspended assistant keeps
+            // her tracking card and is never labelled "Removed".
             // Plain Deactivate (Inactive) is intentionally EXEMPT: it leaves DeletedAt null (the
             // assistant stays visible and correctly labeled) and may be needed to stop an assistant
             // from collecting while a cash dispute is resolved.
@@ -610,6 +613,10 @@ namespace Edvanz.Application.Services
             {
                 assistant.DeactivatedAt = null;
                 assistant.DeletedAt = null;
+                // Reactivation is the existing un-delete path (it already cleared DeletedAt), so the
+                // removal marker has to go with it or the assistant would stay labelled "Removed"
+                // on the payments tracking card while working again.
+                assistant.RemovedAt = null;
                 assistant.UpdatedAt = DateTime.UtcNow;
             }
             // -- 6. Persist -----------------------------------------------------------
@@ -661,7 +668,10 @@ namespace Edvanz.Application.Services
 
             // -- 3. Idempotent: already deleted → succeed (no "already in status" error) --
             // The row is already hidden from the list; a repeat Delete must not error.
-            if (assistant.DeletedAt is not null)
+            // Keyed on RemovedAt, not DeletedAt: a merely SUSPENDED assistant also carries
+            // DeletedAt, and short-circuiting on that would let a suspend-then-delete finish
+            // without ever stamping the removal.
+            if (assistant.RemovedAt is not null)
                 return Result<string>.Success("AssistantDeleted", localizer);
 
             // Guard: don't delete an assistant who is still holding collected cash.
@@ -683,6 +693,9 @@ namespace Edvanz.Application.Services
             //       flagged Suspended so AssistantCleanupJob picks it up for purge.
             assistant.AccountStatus = AccountStatus.Suspended;
             assistant.DeletedAt = DateTime.UtcNow;
+            // The ONLY writer of RemovedAt: this is what makes a removal distinguishable from the
+            // temporary Suspend that shares DeletedAt (see Assistant.RemovedAt).
+            assistant.RemovedAt = DateTime.UtcNow;
             user.IsActive = false;
 
             await _unitOfWork.BeginTransactionAsync();

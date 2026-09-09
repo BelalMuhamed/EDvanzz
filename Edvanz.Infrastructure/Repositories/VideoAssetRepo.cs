@@ -346,16 +346,18 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
     /// <inheritdoc />
     public Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentAsync(
-            long teacherId, long teacherStudentId, int page, int pageSize)
-        => GetStudentVisibleVideosPagedAsync(teacherId, teacherStudentId, unitId: null, page, pageSize);
+            long teacherId, long teacherStudentId, int page, int pageSize,
+            string? search = null, VideoWatchStatus? watchStatus = null)
+        => GetStudentVisibleVideosPagedAsync(
+            teacherId, teacherStudentId, unitId: null, page, pageSize, search, watchStatus);
 
     /// <inheritdoc />
     public Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetVisibleVideosForStudentInUnitAsync(
             long teacherId, long teacherStudentId, long unitId, int page, int pageSize,
-            string? search = null, bool unwatchedOnly = false)
+            string? search = null, VideoWatchStatus? watchStatus = null)
         => GetStudentVisibleVideosPagedAsync(
-            teacherId, teacherStudentId, unitId, page, pageSize, search, unwatchedOnly);
+            teacherId, teacherStudentId, unitId, page, pageSize, search, watchStatus);
 
     /// <summary>
     /// Shared visible-videos query for the student list (V2/V4 enriched) and the V3 unit
@@ -365,7 +367,7 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
     private async Task<(IReadOnlyList<StudentVideoListRow> Items, int TotalCount)>
         GetStudentVisibleVideosPagedAsync(
             long teacherId, long teacherStudentId, long? unitId, int page, int pageSize,
-            string? search = null, bool unwatchedOnly = false)
+            string? search = null, VideoWatchStatus? watchStatus = null)
     {
         // Story B Q1 — implements the spec's scope union with analytics LEFT JOIN. Hot path;
         // covered by the filtered scope-target indexes on VideoScopes plus
@@ -429,15 +431,25 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             scopeQuery = scopeQuery.Where(s => matchingIds.Contains(s.VideoAssetId));
         }
 
-        // "Not watched yet" — the same rule the row badge uses (zero watch
-        // seconds, whether or not an analytics row exists), so filtering by it
-        // returns exactly the rows the student sees marked that way.
-        if (unwatchedOnly)
+        // Watch-state filter — the SQL mirror of VideoWatchRules (see its doc), so a chip
+        // returns exactly the rows the student sees badged that way and the home tile counts
+        // the same population. Never a bare-null projection branch (BUG-7): both sets are
+        // typed id subqueries used with Contains.
+        if (watchStatus.HasValue)
         {
-            scopeQuery = scopeQuery.Where(s =>
-                !_context.VideoAnalytics.Any(an => an.VideoAssetId == s.VideoAssetId
-                                                && an.TeacherStudentId == teacherStudentId
-                                                && an.TotalWatchSeconds > 0));
+            var startedIds = StudentStartedVideoIds(teacherStudentId);
+            var completedIds = StudentCompletedVideoIds(teacherStudentId);
+
+            scopeQuery = watchStatus.Value switch
+            {
+                VideoWatchStatus.NotStarted =>
+                    scopeQuery.Where(s => !startedIds.Contains(s.VideoAssetId)),
+                VideoWatchStatus.Completed =>
+                    scopeQuery.Where(s => completedIds.Contains(s.VideoAssetId)),
+                _ =>
+                    scopeQuery.Where(s => startedIds.Contains(s.VideoAssetId)
+                                       && !completedIds.Contains(s.VideoAssetId)),
+            };
         }
 
         var visibleQuery = scopeQuery
@@ -493,14 +505,60 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
         return (rows, totalCount);
     }
 
+    // ═════════════════════════════════════════════════════════════════════
+    // WATCH STATE — SQL MIRROR OF VideoWatchRules
+    // ═════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Ids of videos this student has STARTED — has watch time on. Not "an analytics row
+    /// exists": the row is written with 0 seconds on the first play report, and a video the
+    /// student never actually watched must stay NotStarted everywhere.
+    /// </summary>
+    private IQueryable<long> StudentStartedVideoIds(long teacherStudentId)
+        => _context.VideoAnalytics
+            .Where(an => an.TeacherStudentId == teacherStudentId && an.TotalWatchSeconds > 0)
+            .Select(an => an.VideoAssetId)
+            .Distinct();
+
+    /// <summary>
+    /// Ids of videos this student has COMPLETED — watch seconds at or past
+    /// <c>VideoWatchRules.CompletionThresholdPercent</c> of a KNOWN duration. Multiplied out
+    /// rather than divided so SQL Server stays in integer arithmetic; a zero/unknown duration
+    /// can never qualify, matching <c>VideoWatchRules.Compute</c>.
+    /// </summary>
+    private IQueryable<long> StudentCompletedVideoIds(long teacherStudentId)
+    {
+        int threshold = VideoWatchRules.CompletionThresholdPercent;
+        return _context.VideoAnalytics
+            .Where(an => an.TeacherStudentId == teacherStudentId && an.TotalWatchSeconds > 0)
+            .Join(_context.VideoAssets,
+                  an => an.VideoAssetId,
+                  a => a.Id,
+                  (an, a) => new { a.Id, an.TotalWatchSeconds, a.DurationSeconds })
+            .Where(x => x.DurationSeconds > 0
+                     && x.TotalWatchSeconds * 100 >= (long)x.DurationSeconds * threshold)
+            .Select(x => x.Id)
+            .Distinct();
+    }
+
     /// <inheritdoc />
     public async Task<(int Total, int Seen)> GetStudentVideoSeenCountsAsync(
         long teacherId, long teacherStudentId)
     {
+        // "Seen" = started (InProgress or Completed). Delegates so this and the tri-state
+        // breakdown are literally the same numbers.
+        var counts = await GetStudentVideoWatchCountsAsync(teacherId, teacherStudentId);
+        return (counts.Total, counts.InProgress + counts.Completed);
+    }
+
+    /// <inheritdoc />
+    public async Task<(int Total, int NotStarted, int InProgress, int Completed)>
+        GetStudentVideoWatchCountsAsync(long teacherId, long teacherStudentId)
+    {
         // EXACT same scope predicate as GetStudentVisibleVideosPagedAsync (unitId always null
         // here — this is a whole-teacher rollup) so the totals can never disagree with what the
         // student's own video list shows. Deliberately duplicated rather than calling the paged
-        // method with a huge page size: this only needs two COUNTs, not a materialized row set.
+        // method with a huge page size: this only needs COUNTs, not a materialized row set.
         var student = await _context.TeacherStudents
             .Where(ts => ts.Id == teacherStudentId && ts.TeacherId == teacherId)
             .Select(ts => new
@@ -535,15 +593,21 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             .Select(s => s.VideoAssetId)
             .Distinct();
 
-        int total = await visibleVideoIds.CountAsync();
-        int seen = await _context.VideoAnalytics
-            .Where(an => an.TeacherStudentId == teacherStudentId
-                      && visibleVideoIds.Contains(an.VideoAssetId))
-            .Select(an => an.VideoAssetId)
-            .Distinct()
-            .CountAsync();
+        // Same three states, same rule as the list filter and the row badge.
+        var startedIds = StudentStartedVideoIds(teacherStudentId);
+        var completedIds = StudentCompletedVideoIds(teacherStudentId);
 
-        return (total, seen);
+        int total = await visibleVideoIds.CountAsync();
+        int completed = await visibleVideoIds.CountAsync(id => completedIds.Contains(id));
+        int started = await visibleVideoIds.CountAsync(id => startedIds.Contains(id));
+
+        // Clamped: a video unscoped after the student had already watched it leaves its
+        // analytics row behind, so the started/completed sets can overhang the visible set
+        // — but they are counted THROUGH visibleVideoIds, so the buckets always sum to Total.
+        int inProgress = started > completed ? started - completed : 0;
+        int notStarted = total > started ? total - started : 0;
+
+        return (total, notStarted, inProgress, completed);
     }
 
     /// <inheritdoc />

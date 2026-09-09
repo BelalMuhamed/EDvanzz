@@ -33,6 +33,12 @@ public interface IOnlineExamService
     Task<Result<bool>> ReplaceQuestionsAsync(long teacherId, long onlineExamId, ReplaceOnlineExamQuestionsRequest request);
     Task<Result<OnlineExamStatusUpdatedDto>> UpdateStatusAsync(long teacherId, long onlineExamId, UpdateOnlineExamStatusRequest request);
     Task<Result<bool>> DeleteAsync(long teacherId, long onlineExamId);
+    /// <summary>
+    /// Manual block / unblock of one student's report. <paramref name="actingUserId"/> is the
+    /// JWT user id of whoever is doing it (teacher OR assistant — assistants can hold
+    /// OnlineExam permissions), stamped on the report in the same transaction as the status
+    /// change so a lifted anti-cheat block is always attributable.
+    /// </summary>
     Task<Result<OnlineExamStatsDto>> UpdateStudentStatusAsync(
-    long teacherId, long onlineExamId, long teacherStudentId, UpdateOnlineExamStudentStatusRequest request);
+    long teacherId, long actingUserId, long onlineExamId, long teacherStudentId, UpdateOnlineExamStudentStatusRequest request);
 }

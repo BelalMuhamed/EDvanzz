@@ -51,6 +51,33 @@ public class StudentOnlineExamReport : BaseEntity
 
     public DateTime? UpdatedAt { get; set; }
 
+    // ── MANUAL STATUS AUDIT (block / unblock accountability) ──────────────
+    // Assistants can hold OnlineExam.View, so a live anti-cheat block can be lifted by
+    // several different people. These three stamps record WHO did it, WHEN, and WHAT the
+    // status was before — written in the same transaction as the status change itself
+    // (OnlineExamService.UpdateStudentStatusAsync), which is the only writer. Nullable
+    // because every row that predates this audit has no history, and because the automatic
+    // paths (violation auto-block, grading, auto-finalize) deliberately leave them alone:
+    // a null actor means "no human changed this status through the manual endpoint".
+    // Plain columns with no navigation, matching StudentTeacherLink's
+    // RespondedByUserId / RemovedByUserId.
+
+    /// <summary>
+    /// <c>User.Id</c> of the teacher or assistant who last changed this report's status
+    /// through the manual block/unblock endpoint. Null when no one ever has.
+    /// </summary>
+    public long? StatusChangedByUserId { get; set; }
+
+    /// <summary>UTC instant of that manual status change. Null when there has been none.</summary>
+    public DateTime? StatusChangedAt { get; set; }
+
+    /// <summary>
+    /// The status the report held immediately BEFORE that manual change, so an unblock can
+    /// be told from a block without reading a separate log. Null on the first-ever write
+    /// (lazy-created Blocked row — there was no previous status).
+    /// </summary>
+    public StudentOnlineExamStatus? PreviousStatus { get; set; }
+
     /// <summary>
     /// Optimistic concurrency token — guards the double-submit race (§3.5: "second
     /// submit guarded by unique index + RowVersion").

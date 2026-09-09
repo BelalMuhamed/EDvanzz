@@ -2041,7 +2041,7 @@
     <value>تم ربط هذا الجهاز بمعلّمك الآن.</value>
   </data>
   <data name="DeviceIdMissing" xml:space="preserve">
-    <value>تعذّر التعرّف على جهازك. من فضلك حدّث التطبيق وحاول مرة أخرى.</value>
+    <value>مقدرناش نتعرف على جهازك. اقفل التطبيق خالص وافتحه تاني. لو المشكلة فضلت، كلم مدرسك يعمل إعادة تعيين لجهازك.</value>
   </data>
   <data name="DeviceReset" xml:space="preserve">
     <value>تم إعادة تعيين جهاز الطالب. يمكنه الآن فتحك من جهاز جديد.</value>

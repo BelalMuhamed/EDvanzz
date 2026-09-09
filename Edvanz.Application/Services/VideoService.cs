@@ -1150,7 +1150,9 @@ public sealed class VideoService : IVideoService
         if (visibilityGate is not null) return visibilityGate;
 
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
-            .GetVisibleVideosForStudentAsync(teacherId, teacherStudentId, request.Page, request.PageSize);
+            .GetVisibleVideosForStudentAsync(
+                teacherId, teacherStudentId, request.Page, request.PageSize,
+                request.Search, request.ResolveWatchStatus());
 
         var response = await BuildStudentVideoPageAsync(
             teacherId, rows, totalCount, request.Page, request.PageSize, studentLanguage);
@@ -1169,7 +1171,7 @@ public sealed class VideoService : IVideoService
         var (rows, totalCount) = await _unitOfWork.VideoAssetsRepo
             .GetVisibleVideosForStudentInUnitAsync(
                 teacherId, teacherStudentId, unitId, request.Page, request.PageSize,
-                request.Search, request.UnwatchedOnly);
+                request.Search, request.ResolveWatchStatus());
 
         var response = await BuildStudentVideoPageAsync(
             teacherId, rows, totalCount, request.Page, request.PageSize, studentLanguage);
@@ -1184,18 +1186,20 @@ public sealed class VideoService : IVideoService
         var moduleGate = await CheckModuleActiveAsync<StudentVideoProgressDto>(teacherId);
         if (moduleGate is not null) return moduleGate;
 
-        var (total, seen) = await _unitOfWork.VideoAssetsRepo
-            .GetStudentVideoSeenCountsAsync(teacherId, teacherStudentId);
+        // One rule, three outcomes — the SAME VideoWatchRules classification behind the row
+        // badge and the list filter, so the tile's "N new" can no longer count a video the
+        // list is badging differently. The repo returns the buckets already summing to Total.
+        var counts = await _unitOfWork.VideoAssetsRepo
+            .GetStudentVideoWatchCountsAsync(teacherId, teacherStudentId);
 
         return Result<StudentVideoProgressDto>.Success(
             new StudentVideoProgressDto
             {
-                Total = total,
-                Seen = seen,
-                // Clamped: seen counts analytics rows, and a video unscoped
-                // after the student had already opened it leaves the row
-                // behind, which could otherwise drive this negative.
-                NotStarted = total > seen ? total - seen : 0,
+                Total = counts.Total,
+                Seen = counts.InProgress + counts.Completed,
+                NotStarted = counts.NotStarted,
+                InProgress = counts.InProgress,
+                Watched = counts.Completed,
             },
             _localizer);
     }

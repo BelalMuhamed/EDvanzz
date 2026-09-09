@@ -753,10 +753,30 @@ public sealed class StudentVideoListRequest
     public string? Search { get; set; }
 
     /// <summary>
-    /// When true, returns only videos the student has not started. Defaults to
-    /// false, so an older app build sees the unchanged full list.
+    /// LEGACY (kept for the shipped 4.0.0+17 app): when true, returns only videos the student
+    /// has not started. Exactly equivalent to <c>watchStatus=NotStarted</c>. Defaults to false,
+    /// so an older app build sees the unchanged full list. <see cref="WatchStatus"/> wins when
+    /// both are sent; do not remove this until the old builds are gone.
     /// </summary>
     public bool UnwatchedOnly { get; set; }
+
+    /// <summary>
+    /// Tri-state watch filter: <c>NotStarted</c> (never opened) / <c>InProgress</c> (started but
+    /// not finished) / <c>Completed</c> (watched through). Omitted = every visible video. Bound
+    /// from the query string by name or number, and judged by the same
+    /// <c>VideoWatchRules</c> the row's own <c>watchStatus</c> badge uses.
+    /// </summary>
+    public VideoWatchStatus? WatchStatus { get; set; }
+
+    /// <summary>
+    /// The filter actually applied: <see cref="WatchStatus"/> when the caller sent one,
+    /// otherwise the legacy <see cref="UnwatchedOnly"/> flag mapped to
+    /// <c>VideoWatchStatus.NotStarted</c>, otherwise no filter. One place decides, so the two
+    /// parameters can never be resolved differently on two endpoints. A METHOD, not a
+    /// property, so model binding and Swagger never mistake it for a third query parameter.
+    /// </summary>
+    public VideoWatchStatus? ResolveWatchStatus()
+        => WatchStatus ?? (UnwatchedOnly ? VideoWatchStatus.NotStarted : null);
 }
 
 /// <summary>
@@ -837,11 +857,29 @@ public sealed class StudentVideoProgressDto
     /// <summary>Videos currently visible to this student under this teacher.</summary>
     public int Total { get; set; }
 
-    /// <summary>Of <see cref="Total"/>, how many the student has opened at least once.</summary>
+    /// <summary>
+    /// Of <see cref="Total"/>, how many the student has actually STARTED — i.e.
+    /// <see cref="InProgress"/> + <see cref="Watched"/>. Until 2026-09-09 this counted analytics
+    /// ROWS, which are created with 0 watch seconds on the first play report, so a video the
+    /// student never watched dropped out of the "new" badge while the list still badged it
+    /// NotStarted.
+    /// </summary>
     public int Seen { get; set; }
 
     /// <summary>Of <see cref="Total"/>, how many have never been opened — the "new" badge.</summary>
     public int NotStarted { get; set; }
+
+    /// <summary>
+    /// Of <see cref="Total"/>, how many are started but not finished. Additive field — an older
+    /// app build ignores it. <c>NotStarted + InProgress + Watched == Total</c> always.
+    /// </summary>
+    public int InProgress { get; set; }
+
+    /// <summary>
+    /// Of <see cref="Total"/>, how many the student has watched through (the same completion
+    /// threshold the unit progress rail and the teacher's <c>completedCount</c> use). Additive.
+    /// </summary>
+    public int Watched { get; set; }
 }
 
 public sealed class StudentVideoUnitDto

@@ -33,6 +33,19 @@ public class CenterAssistant : BaseEntity
     /// <summary>Soft-delete timestamp. Null if not deleted.</summary>
     public DateTime? DeletedAt { get; set; }
 
+    /// <summary>
+    /// When this assistant was REMOVED from the account (soft-delete). Null while they are on the
+    /// account, whatever their <see cref="AccountStatus"/>.
+    ///
+    /// Distinct from <see cref="DeletedAt"/> ON PURPOSE: DeletedAt is written by BOTH the delete
+    /// path AND a temporary Suspend, so it cannot answer "is this person gone?". Reading it as a
+    /// removal labelled a merely suspended assistant "Removed" on the payments tracking card and
+    /// hid them from the next month entirely. Removal-driven behaviour (payment tracking
+    /// visibility, the Removed chip) keys on THIS column; DeletedAt keeps its existing
+    /// login/visibility duties untouched.
+    /// </summary>
+    public DateTime? RemovedAt { get; set; }
+
     public DateTime UpdatedAt { get; set; }
 
     // NOTE (P5): granular permission profiles for a center assistant are stored via a dedicated

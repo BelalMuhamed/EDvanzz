@@ -122,6 +122,52 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
         string? search = null);
 
     /// <summary>
+    /// One arbitrary window of the SAME ordered result as
+    /// <see cref="GetTransactionsByDateRangePagedAsync"/> (newest CollectedAt first, Id as tiebreak),
+    /// addressed by <paramref name="skip"/>/<paramref name="take"/> rather than a page number, and
+    /// without the extra COUNT. Exists for the collector-scoped ledger, whose rows are interleaved
+    /// with refund/withdrawal lines and therefore start at an offset no page number can express.
+    /// Same eager-loading as the paged form (Session, Allocations→PaymentPeriod, EditLogs).
+    /// </summary>
+    Task<IReadOnlyList<PaymentTransaction>> GetTransactionsByDateRangeSliceAsync(
+        long teacherId,
+        DateTime startDate, DateTime endDate,
+        long? sessionId, long? collectedByUserId,
+        int skip, int take,
+        string? search = null);
+
+    /// <summary>
+    /// Per-calendar-day money totals over the SAME filtered set as
+    /// <see cref="GetTransactionsByDateRangePagedAsync"/>, newest day first: cash in
+    /// (<c>Collected</c>), cash out (<c>Deducted</c> — defensive, a collection is never negative
+    /// today), the number of collection rows (<c>CollectionsCount</c>) and the number of ledger rows
+    /// the day contributes (<c>RowCount</c>). Grouped on the RAW UTC day of <c>CollectedAt</c>, the
+    /// key the ledger orders and groups by. Lets the collector ledger report full-scope day nets and
+    /// a full-scope total while fetching only the requested page of rows.
+    /// </summary>
+    Task<IReadOnlyList<(DateTime Day, decimal Collected, decimal Deducted, int CollectionsCount, int RowCount)>>
+        GetTransactionDayTotalsAsync(
+            long teacherId,
+            DateTime startDate, DateTime endDate,
+            long? sessionId, long? collectedByUserId,
+            string? search = null,
+        int localOffsetHours = 0);
+
+    /// <summary>
+    /// Whole-scope money aggregates over the SAME filtered set as
+    /// <see cref="GetTransactionsByDateRangePagedAsync"/>: gross cash (<c>Gross</c>), the number of
+    /// collections (<c>TransactionCount</c>) and how many DISTINCT students paid
+    /// (<c>DistinctPayingStudents</c>, transactions with no student excluded). One round trip, no
+    /// rows — the collector-scoped summary strip used to fetch every transaction in the window,
+    /// eager-loads and all, purely to add these three up in memory.
+    /// </summary>
+    Task<(decimal Gross, int TransactionCount, int DistinctPayingStudents)>
+        GetTransactionRangeAggregatesAsync(
+            long teacherId,
+            DateTime startDate, DateTime endDate,
+            long? sessionId, long? collectedByUserId,
+            string? search = null);
+    /// <summary>
     /// Distribution of money collected by per-month amount in [start, end] for the teacher (optionally
     /// one collector): groups the per-period settlement slices by applied amount so a multi-month
     /// payment counts once per month. Drives the "how many paid X" summary cards.
@@ -695,6 +741,24 @@ public interface IPaymentRepo : IGenericRepo<PaymentTransaction, long>
     /// (collect/edit) and the collect-lookup <c>monthlyAmount</c>.
     /// </summary>
     Task<decimal> GetStudentMonthlyRateAsync(long teacherId, long teacherStudentId);
+
+    /// <summary>
+    /// Batch form of <see cref="GetStudentMonthlyRateAsync"/>: the per-month rate for many students
+    /// in ONE round trip, keyed by <c>TeacherStudent.Id</c>. Same rule per student (custom override,
+    /// else the current session's amount, else 0). Ids that are not this teacher's active students
+    /// are simply absent from the result. Exists so a bulk collect/submit validates a 40-student
+    /// batch without one rate query per row.
+    /// </summary>
+    Task<IReadOnlyDictionary<long, decimal>> GetStudentMonthlyRatesAsync(
+        long teacherId, IReadOnlyCollection<long> teacherStudentIds);
+
+    /// <summary>
+    /// Which of <paramref name="teacherStudentIds"/> are this teacher's ACTIVE (non-soft-deleted)
+    /// students. The batch existence check behind bulk collect/submit validation — same population
+    /// as <c>ITeacherStudentRepo.GetActiveByIdAndTeacherAsync</c>, one round trip instead of N.
+    /// </summary>
+    Task<IReadOnlyCollection<long>> GetActiveStudentIdsForTeacherAsync(
+        long teacherId, IReadOnlyCollection<long> teacherStudentIds);
 
     // ══════════════════════════════════════════════
     // DEPARTURE QUERIES

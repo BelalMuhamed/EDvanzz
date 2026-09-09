@@ -373,6 +373,11 @@ public sealed class OnlineExamsController : ModuleSixApiBaseController
     /// <param name="onlineExamId">The exam.</param>
     /// <param name="teacherStudentId">The student whose report status is being set.</param>
     /// <param name="request">The target status.</param>
+    /// <remarks>
+    /// Who performed the change is taken from the JWT (never the body) and stamped on the
+    /// report — assistants can hold this permission, so an unblock on a live exam has to be
+    /// attributable after the fact.
+    /// </remarks>
     /// <response code="200">Status updated; current stats returned.</response>
     /// <response code="400">The requested status is not allowed to be set manually.</response>
     /// <response code="404">Exam or student not found, or student not owned by the caller's tenant.</response>
@@ -391,6 +396,7 @@ public sealed class OnlineExamsController : ModuleSixApiBaseController
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
-        return ToResponse(await _service.UpdateStudentStatusAsync(teacherId.Value, onlineExamId, teacherStudentId, request));
+        return ToResponse(await _service.UpdateStudentStatusAsync(
+            teacherId.Value, GetActingUserId(), onlineExamId, teacherStudentId, request));
     }
 }
