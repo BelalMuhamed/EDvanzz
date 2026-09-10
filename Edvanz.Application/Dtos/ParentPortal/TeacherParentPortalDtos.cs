@@ -64,6 +64,17 @@ public class ParentPortalRequestListItemDto
     /// </summary>
     public bool StudentHasParentPhone { get; set; }
 
+    /// <summary>
+    /// The number CURRENTLY on the student's record, when there is one and it differs from
+    /// <see cref="ClaimedPhone"/>. Null otherwise — including when the two match, where showing the
+    /// same number twice would only be noise.
+    ///
+    /// Exists so the teacher can actually make the replace-or-keep decision: told only that "a
+    /// different number is on file", they cannot tell a stale number they want corrected from a
+    /// second parent they must not overwrite. It is the teacher's own data, shown to the teacher.
+    /// </summary>
+    public string? StudentParentPhone { get; set; }
+
     public DateTime RequestedAt { get; set; }
 
     /// <summary>Serialized as a string ("Pending"). Always Pending in the inbox; present for symmetry with the followers list.</summary>
@@ -117,10 +128,23 @@ public class ParentPortalApproveRequestDto
     /// turning each approval into roster data quality: next time that parent is auto-approved with
     /// no teacher involvement, and the "students missing a parent number" count drops.
     ///
-    /// NEVER overwrites an existing number. If the student already has one (same or different) the
-    /// flag is ignored and the response says why via <c>phoneSaveSkippedReason</c>.
+    /// Does not overwrite an existing number unless <see cref="OverwriteStudentPhone"/> is also
+    /// set. When the student already has one and overwrite was not asked for, the flag is ignored
+    /// and the response says why via <c>phoneSaveSkippedReason</c>.
     /// </summary>
     public bool SavePhoneToStudent { get; set; }
+
+    /// <summary>
+    /// Replace a DIFFERENT number already on the student's record with this parent's.
+    ///
+    /// Separate from <see cref="SavePhoneToStudent"/> and default false ON PURPOSE. The number on
+    /// file might be a second parent — a mother's number that this father's approval would silently
+    /// destroy — or it might be stale and exactly what the teacher wants corrected. Only the
+    /// teacher knows which, so replacing is always an explicit act with its own confirmation,
+    /// never a side effect of approving. Ignored unless <see cref="SavePhoneToStudent"/> is true,
+    /// and irrelevant when the record has no number at all.
+    /// </summary>
+    public bool OverwriteStudentPhone { get; set; }
 }
 
 /// <summary>Result of an approval: the follower row plus what happened to the optional phone save.</summary>
@@ -152,6 +176,22 @@ public class ParentPortalBulkActionDto
     /// <summary>"approve" or "reject" (case-insensitive). Anything else is a 400.</summary>
     [Required]
     public string Action { get; set; } = string.Empty;
+
+    /// <summary>
+    /// On an APPROVE, also write each parent's number onto their student's record — but only where
+    /// the record has none. Bulk NEVER overwrites, whatever the single-approve path allows: the
+    /// teacher is confirming forty people at once and cannot possibly be judging forty individual
+    /// "is this the mother or the father?" questions.
+    ///
+    /// Added 2026-09-11. Bulk approve captured NOTHING before, which is the worst possible place
+    /// for that gap: the select-all lane exists precisely because a whole class's parents arrive at
+    /// the start of term, so the teacher's highest-volume action was the one guaranteed to leave
+    /// every one of those students without a parent number — and every one of those parents
+    /// dependent on a browser cookie and a manual approval next time.
+    ///
+    /// Ignored on a reject.
+    /// </summary>
+    public bool SavePhoneToStudent { get; set; }
 }
 
 /// <summary>
@@ -172,6 +212,13 @@ public class ParentPortalBulkResultDto
 
     /// <summary>Ids that were skipped because they were not pending, not this teacher's, or their student has been removed.</summary>
     public List<long> SkippedIds { get; set; } = new();
+
+    /// <summary>
+    /// How many parent numbers were written onto student records by this call. Always 0 on a
+    /// reject, or when <c>savePhoneToStudent</c> was not asked for. Reported so the teacher is told
+    /// what their bulk action actually changed rather than only how many people it let in.
+    /// </summary>
+    public int PhonesSaved { get; set; }
 }
 
 /// <summary>

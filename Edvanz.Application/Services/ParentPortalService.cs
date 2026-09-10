@@ -14,6 +14,7 @@ using Edvanz.Domain.Constants;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Enums;
 using Edvanz.Domain.Interfaces;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -50,6 +51,7 @@ public sealed class ParentPortalService : IParentPortalService
     private readonly ISubscriptionGateService _subscriptionGate;
     private readonly ITimeZoneService _timeZoneService;
     private readonly IParentPortalNotifier _notifier;
+    private readonly IDistributedCache _cache;
     private readonly ParentPortalOptions _options;
     private readonly IStringLocalizer<Domain.Resources.Messages> _localizer;
     private readonly ILogger<ParentPortalService> _logger;
@@ -60,6 +62,7 @@ public sealed class ParentPortalService : IParentPortalService
         ISubscriptionGateService subscriptionGate,
         ITimeZoneService timeZoneService,
         IParentPortalNotifier notifier,
+        IDistributedCache cache,
         IOptions<ParentPortalOptions> options,
         IStringLocalizer<Domain.Resources.Messages> localizer,
         ILogger<ParentPortalService> logger)
@@ -69,6 +72,7 @@ public sealed class ParentPortalService : IParentPortalService
         _subscriptionGate = subscriptionGate;
         _timeZoneService = timeZoneService;
         _notifier = notifier;
+        _cache = cache;
         _options = options.Value;
         _localizer = localizer;
         _logger = logger;
@@ -127,8 +131,14 @@ public sealed class ParentPortalService : IParentPortalService
             return Result<ParentPortalAccessRequestResultDto>.Failure(
                 _localizer, "ParentPortalSessionExpired", HttpStatusCode.BadRequest);
 
-        // Phone is optional, but a SUPPLIED one must be a real Egyptian mobile — otherwise the
-        // parent silently loses auto-approval and never learns why.
+        // The parent's mobile number. A SUPPLIED one must be a real Egyptian mobile — otherwise
+        // the parent silently loses auto-approval and never learns why.
+        //
+        // REQUIRED once ParentPortal__RequirePhone is on (see ParentPortalOptions.RequirePhone for
+        // the deploy-ordering reason it starts false). The phone is not a formality: it is what
+        // lets the roster-phone rule admit a parent with no teacher involvement at all, what lets
+        // an approved parent back in from a new handset or a browser that lost its cookie, and the
+        // one thing a teacher can act on when they are deciding whether to approve a stranger.
         string? claimedPhone = null;
         if (!string.IsNullOrWhiteSpace(dto.PhoneNumber))
         {
@@ -136,6 +146,11 @@ public sealed class ParentPortalService : IParentPortalService
             if (claimedPhone is null)
                 return Result<ParentPortalAccessRequestResultDto>.Failure(
                     _localizer, "ParentPortalPhoneFormat", HttpStatusCode.BadRequest);
+        }
+        else if (_options.RequirePhone)
+        {
+            return Result<ParentPortalAccessRequestResultDto>.Failure(
+                _localizer, "ParentPortalPhoneRequired", HttpStatusCode.BadRequest);
         }
 
         // The parent's self-declared name. REQUIRED: the teacher approves by recognising a person,
@@ -207,38 +222,52 @@ public sealed class ParentPortalService : IParentPortalService
         var student = await _unitOfWork.Users.GetActiveTeacherStudentByCodeAsync(teacher.Id, studentCode);
 
         // ══════════════════════════════════════════════════════════════════
-        // SECURITY — TWO AXES, AND THEY ARE NOT THE SAME. DO NOT MERGE THEM.
+        // SECURITY — WHAT WE TELL THE PARENT, AND WHY IT CHANGED (2026-09-11).
         //
-        // TEACHER axis (eligibility) — MAY diverge, and deliberately does.
+        // TEACHER axis (eligibility) — honest, and always was.
         //   Whether a teacher accepts portal followers is ALREADY PUBLIC: anyone can read it from
         //   GET /teachers/{teacherCode}/preview, which returns `portalEnabled` for any teacher
         //   code. Hiding it here would therefore buy exactly zero security while stranding a real
         //   parent of a not-yet-enabled teacher on a "waiting for approval" screen that can NEVER
-        //   resolve — nothing was written, so no teacher will ever see a request to approve.
-        //   So this returns an honest, actionable 403 telling them to ask the teacher to switch
-        //   it on.
+        //   resolve. So this returns an honest, actionable 403.
         //
-        // STUDENT axis (does this roster code exist?) — MUST NEVER diverge.
-        //   TeacherStudent.StudentCode is a SEQUENTIAL counter (A1, A2 … Z999) and
-        //   Teacher.TeacherCode is public, so anyone could walk a teacher's entire roster by
-        //   submitting codes. The ONLY thing stopping that is that a request for a code that does
-        //   NOT exist is answered with the byte-identical payload a genuine pending request gets:
-        //   200, state "pending", the same message, and NO student fields — writing nothing. Any
-        //   divergence on THIS branch (a 404, a different code, an extra field, a different
-        //   message) turns the endpoint into a roster-enumeration oracle. A REAL pending request
-        //   below withholds the student's name/code/id for the same reason; student details are
-        //   only ever returned on an "active" (phone-verified) result.
+        // STUDENT axis (does this student code exist?) — DELIBERATE REVERSAL. DO NOT "FIX" BACK.
+        //   This branch used to return the byte-identical pending payload a genuine request gets,
+        //   writing nothing, so that nobody could walk a teacher's students by submitting codes
+        //   (StudentCode is a sequential counter A1..Z999 and TeacherCode is public). That
+        //   protected the roster and destroyed the product: the teacher's own share message asks
+        //   parents for the TEACHER code only, so parents arrive not knowing the second code,
+        //   guess, are told "request sent", and wait forever on a screen no one can resolve —
+        //   nothing was written, so no teacher ever sees anything to approve. Reproduced on prod
+        //   2026-09-11: a fake code and a real code produced the same screen; only one reached the
+        //   teacher. Owner's decision: a parent must be told, and corrected, exactly as they are
+        //   for a wrong TEACHER code.
         //
-        //   THREE separate situations all funnel into that one identical pending payload, and they
-        //   must stay indistinguishable: the student code does not exist; a genuine new request was
-        //   just queued; and a request suppressed by the post-rejection cooldown (step 5b).
+        //   The enumeration defence did not go away — it became a BUDGET instead of a blanket.
+        //   Honest answers are metered per device and per teacher (see the options); once a caller
+        //   burns through them inside the hour we revert to the old neutral pending payload, which
+        //   writes nothing and reveals nothing. A parent fixing a typo needs two or three; a
+        //   script walking A1, A2, A3… goes dark almost immediately. The portal adds its own,
+        //   tighter cap (10 distinct codes per browser per 30 minutes) in front of this.
+        //
+        //   A REAL pending request still withholds the student's name/code/id — those are only
+        //   ever returned on an "active" (phone-verified) result. Knowing that a code EXISTS is
+        //   now answerable; knowing WHO it belongs to is still not.
         // ══════════════════════════════════════════════════════════════════
         if (!eligible)
             return Result<ParentPortalAccessRequestResultDto>.Failure(
                 _localizer, "ParentPortalDisabled", HttpStatusCode.Forbidden);
 
         if (student is null)
-            return PendingResult(teacherName);
+        {
+            // Over budget = this caller has been told "not found" too many times this hour, so
+            // they are treated as a scanner and get the old silent answer. Under budget = a
+            // human who mistyped, and they get told so.
+            return await IsUnknownCodeBudgetExhaustedAsync(teacher.Id, deviceHash)
+                ? PendingResult(teacherName)
+                : Result<ParentPortalAccessRequestResultDto>.Failure(
+                    _localizer, "ParentPortalStudentCodeNotFound", HttpStatusCode.NotFound);
+        }
 
         // ── 5. Already have a live grant on this device? Re-surface it instead of duplicating. ──
         var existing = await _unitOfWork.ParentPortalAccesses
@@ -266,40 +295,87 @@ public sealed class ParentPortalService : IParentPortalService
                 }
             }
 
-            return existing.Status == ParentPortalAccessStatus.Active
-                ? ActiveResult(teacherName, student)
-                : PendingResult(teacherName);
+            if (existing.Status == ParentPortalAccessStatus.Active)
+                return ActiveResult(teacherName, student);
+
+            // ── PENDING: RE-EVALUATE TRUST, do not just report "still waiting". ──────────
+            // This branch used to return PendingResult outright, which quietly stranded the
+            // two most likely ways a waiting parent gets un-stuck:
+            //   * they first submitted with no phone (it was optional) and now supply one;
+            //   * the TEACHER adds their number to the student's record — the remedy this
+            //     product advertises everywhere, including on the waiting screen itself and
+            //     in the post-rejection message.
+            // In both cases the resubmit hit this short-circuit and answered "still waiting"
+            // forever, so the fix a teacher had just performed did nothing and only a manual
+            // approval could ever release them. The repository loads this row TRACKED
+            // precisely so the request path can promote it — nothing ever did.
+            var (rosterMatch, trusted) = await EvaluateTrustAsync(student, claimedPhone);
+            if (!rosterMatch && !trusted)
+                return PendingResult(teacherName);
+
+            existing.Status = ParentPortalAccessStatus.Active;
+            existing.RespondedAt = now;
+            // RespondedByUserId stays NULL — no human approved this; the number did.
+            existing.AutoApproved = rosterMatch;
+            existing.Origin = rosterMatch
+                ? ParentPortalAccessOrigin.RosterPhone
+                : ParentPortalAccessOrigin.TrustedPhone;
+            // Record the number that earned the promotion, so a later device change is
+            // re-admitted by the trusted-phone rule. Safe to store even over a previous
+            // value: it only reaches here when the teacher already knows this number.
+            if (claimedPhone is not null)
+                existing.ClaimedPhone = claimedPhone;
+
+            try
+            {
+                await _unitOfWork.ParentPortalAccesses.UpdateAsync(existing);
+                await _unitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                // Unlike the name backfill above, this one must NOT be swallowed: telling a
+                // parent they are in when the row did not change would strand them again.
+                _logger.LogError(ex,
+                    "Parent portal: could not promote pending grant {GrantId} to active", existing.Id);
+                return PendingResult(teacherName);
+            }
+
+            return ActiveResult(teacherName, student);
         }
 
-        // ── 5b. POST-REJECTION COOLDOWN ──────────────────────────────────────────────────
+        // ── 5b. Decide whether this request is already trusted. TWO independent rules. ──
+        //
+        // ORDER MATTERS: this runs BEFORE the post-rejection cooldown below, and that is the whole
+        // point. It used to run after, which meant a teacher had NO working remedy for a rejection
+        // they regretted — they could add the parent's number to the student's record (the one fix
+        // the product tells everyone about, including the portal's own waiting screen) and the
+        // parent would STILL be silently held for 24 hours. Trust earned from the teacher must
+        // beat a cooldown that exists only to stop untrusted re-submits.
+        //
+        var (rosterPhoneMatches, trustedPhone) = await EvaluateTrustAsync(student, claimedPhone);
+        bool grantActive = rosterPhoneMatches || trustedPhone;
+
+        // ── 5c. POST-REJECTION COOLDOWN — untrusted re-submits only ──────────────────────
         // Rejected is TERMINAL, so it does not occupy the live-row unique index and a rejected
         // parent could otherwise re-submit straight away and keep reappearing in the inbox
         // (bounded only by the hourly caps). Keyed on the NEWEST row across both axes, not "was
         // there ever a rejection": someone rejected yesterday and approved today must not be held.
         //
-        // It returns the SAME PendingResult as everything else and writes nothing — a distinct
-        // code or status here would re-open the enumeration oracle closed above.
-        if (await IsInRejectionCooldownAsync(student.Id, deviceHash, claimedPhone, now))
-            return PendingResult(teacherName);
-
-        // ── 6. Decide whether this request is already trusted. TWO independent rules. ──
+        // It now answers HONESTLY rather than returning a silent pending, for the same reason the
+        // unknown-code branch does: the old behaviour left a rejected parent on a waiting screen
+        // that could never resolve, with nothing written and nobody able to help them. The message
+        // names the remedy — ask the teacher to put your number on the child's record — which the
+        // trust rules above now honour immediately.
         //
-        // (a) ROSTER PHONE — the teacher wrote this number on the student's record themselves.
-        //     Compared IN MEMORY on the already-loaded row: roster phones are only Trim()-ed on
-        //     write, so stored formats vary and only a normalize-both-sides comparison is correct.
-        bool rosterPhoneMatches =
-            EgyptianPhoneNumber.AreSameNumber(claimedPhone, student.ParentPhoneNumber);
-
-        // (b) TRUSTED PHONE — this number already holds an ACTIVE grant on this student, so a
-        //     teacher vetted it before. This is what makes access follow the PHONE instead of the
-        //     browser: clearing cookies or moving to a new phone no longer re-queues an approved
-        //     parent. Compared in SQL against the always-normalized ClaimedPhone column.
-        bool trustedPhone = !rosterPhoneMatches
-            && claimedPhone is not null
-            && await _unitOfWork.ParentPortalAccesses
-                .HasActiveGrantWithPhoneAsync(student.Id, claimedPhone);
-
-        bool grantActive = rosterPhoneMatches || trustedPhone;
+        // This leaks only to someone holding a phone number that was already rejected for that
+        // student, i.e. the rejected parent themselves; their own device is already told "rejected"
+        // by GET /access.
+        if (!grantActive &&
+            await IsInRejectionCooldownAsync(student.Id, deviceHash, claimedPhone, now))
+        {
+            return Result<ParentPortalAccessRequestResultDto>.Failure(
+                _localizer, "ParentPortalRequestPreviouslyRejected", HttpStatusCode.Conflict);
+        }
 
         // AutoApproved stays honest: TRUE only for the roster-phone rule. A trusted-phone grant is
         // not "the app let them in on its own" — a teacher approved that number once. Origin
@@ -356,6 +432,34 @@ public sealed class ParentPortalService : IParentPortalService
     }
 
     /// <summary>
+    /// The TWO independent rules that admit a request without a teacher touching it. Shared by the
+    /// new-request path and the promote-a-waiting-row path so the two can never drift — a parent
+    /// must not be admitted on a first submit but left waiting on a second, or vice versa.
+    ///
+    /// (a) ROSTER PHONE — the teacher wrote this number on the student's record themselves.
+    ///     Compared IN MEMORY on the already-loaded row: roster phones are only Trim()-ed on write,
+    ///     so stored formats vary and only a normalize-both-sides comparison is correct.
+    ///
+    /// (b) TRUSTED PHONE — this number already holds an ACTIVE grant on this student, so a teacher
+    ///     vetted it before. This is what makes access follow the PHONE instead of the browser:
+    ///     clearing cookies or moving to a new handset no longer re-queues an approved parent.
+    ///     Compared in SQL against the always-normalized ClaimedPhone column.
+    /// </summary>
+    private async Task<(bool RosterPhoneMatches, bool TrustedPhone)> EvaluateTrustAsync(
+        TeacherStudent student, string? claimedPhone)
+    {
+        bool rosterPhoneMatches =
+            EgyptianPhoneNumber.AreSameNumber(claimedPhone, student.ParentPhoneNumber);
+
+        bool trustedPhone = !rosterPhoneMatches
+            && claimedPhone is not null
+            && await _unitOfWork.ParentPortalAccesses
+                .HasActiveGrantWithPhoneAsync(student.Id, claimedPhone);
+
+        return (rosterPhoneMatches, trustedPhone);
+    }
+
+    /// <summary>
     /// True when the newest grant on either axis is a rejection inside
     /// <see cref="RejectionCooldown"/>. Uses <c>RespondedAt</c> (when the teacher actually said no)
     /// and falls back to <c>RequestedAt</c> for any row missing it.
@@ -378,12 +482,24 @@ public sealed class ParentPortalService : IParentPortalService
     // ══════════════════════════════════════════════════════════════════════
 
     /// <inheritdoc />
-    public async Task<Result<ParentPortalAccessStateDto>> GetAccessStateAsync(string deviceHash)
+    public async Task<Result<ParentPortalAccessStateDto>> GetAccessStateAsync(
+        string deviceHash, long? rosterId = null)
     {
         if (string.IsNullOrWhiteSpace(deviceHash))
             return NoAccessState();
 
-        var grant = await _unitOfWork.ParentPortalAccesses.GetLatestByDeviceAsync(deviceHash);
+        // SELECTION. A device may follow several children; the caller names which one it wants and
+        // we fall back to the newest — which is exactly what this method always returned, so a
+        // one-child parent (and any client that never sends rosterId) sees no change at all.
+        // A rosterId this device holds no ACTIVE grant for is IGNORED rather than refused: the
+        // selection is a UI preference, and a child the teacher has since revoked must degrade to
+        // "here is your other child", never to an error page.
+        ParentPortalAccess? grant = null;
+        if (rosterId is > 0)
+            grant = await _unitOfWork.ParentPortalAccesses
+                .GetActiveByDeviceAndStudentAsync(deviceHash, rosterId.Value);
+
+        grant ??= await _unitOfWork.ParentPortalAccesses.GetLatestByDeviceAsync(deviceHash);
         if (grant is null)
             return NoAccessState();
 
@@ -460,6 +576,7 @@ public sealed class ParentPortalService : IParentPortalService
         dto.StudentCode = grant.TeacherStudent.StudentCode;
         dto.RosterId = grant.TeacherStudentId;
         dto.SessionName = await ResolveSessionNameAsync(teacher.Id, grant.TeacherStudent.SessionId);
+        dto.Students = await BuildFollowedStudentsAsync(deviceHash, grant.TeacherStudentId);
 
         await TouchAsync(grant.Id);
 
@@ -579,6 +696,46 @@ public sealed class ParentPortalService : IParentPortalService
     // PRIVATE — CALLER RESOLUTION
     // ══════════════════════════════════════════════════════════════════════
 
+    /// <summary>
+    /// The children this browser follows, for the switcher. One query plus one batched teacher
+    /// lookup — the two children may sit with DIFFERENT teachers, so each entry carries its own
+    /// teacher name and the switcher can label them apart.
+    ///
+    /// Rows whose roster record was soft-deleted are dropped: a name-less chip that leads to a
+    /// "student removed" page is worse than not offering the child at all.
+    /// </summary>
+    private async Task<List<ParentPortalFollowedStudentDto>> BuildFollowedStudentsAsync(
+        string deviceHash, long selectedRosterId)
+    {
+        var grants = await _unitOfWork.ParentPortalAccesses.GetActiveGrantsByDeviceAsync(deviceHash);
+
+        var live = grants.Where(g => g.TeacherStudent is not null).ToList();
+        if (live.Count == 0)
+            return new List<ParentPortalFollowedStudentDto>();
+
+        // ONE batch for every teacher involved, so a two-child parent costs one extra query, not
+        // one per child.
+        var teacherIds = live.Select(g => g.TeacherId).Distinct().ToList();
+        var batch = await _unitOfWork.Users.GetTeacherDashboardDataAsync(teacherIds);
+
+        return live.Select(g =>
+        {
+            string teacherName = string.Empty;
+            if (batch.Teachers.TryGetValue(g.TeacherId, out var t) &&
+                batch.Users.TryGetValue(t.UserId, out var u))
+                teacherName = u.FullName;
+
+            return new ParentPortalFollowedStudentDto
+            {
+                RosterId = g.TeacherStudentId,
+                StudentName = g.TeacherStudent!.StudentName,
+                StudentCode = g.TeacherStudent.StudentCode,
+                TeacherName = teacherName,
+                IsSelected = g.TeacherStudentId == selectedRosterId
+            };
+        }).ToList();
+    }
+
     /// <summary>Everything a read endpoint needs once the device has been authorized.</summary>
     private sealed record PortalContext(
         ParentPortalAccess Grant,
@@ -592,9 +749,14 @@ public sealed class ParentPortalService : IParentPortalService
     /// Authorizes a portal read and re-validates the whole chain LIVE.
     ///
     /// THE ROUTE'S <paramref name="rosterId"/> IS NEVER TRUSTED (CLAUDE.md §3.3, generalized by
-    /// BUG-12 to every identity id): the grant is resolved from the DEVICE first, and the supplied
-    /// roster id must then equal the one that grant names — otherwise 404, indistinguishable from
-    /// "no grant at all", so it cannot be used to probe which roster ids exist.
+    /// BUG-12 to every identity id): it is looked up as a grant THIS DEVICE HOLDS, and anything
+    /// else 404s, indistinguishable from "no grant at all", so it cannot be used to probe which
+    /// roster ids exist.
+    ///
+    /// It used to resolve the device's NEWEST active grant and then demand the route id equal it,
+    /// which was the same guarantee for one child and a dead end for two: a parent of siblings
+    /// could not reach the older child at all. Authorizing the id against the device's OWN grants
+    /// is exactly as strict and finally correct for a parent with more than one.
     /// </summary>
     private async Task<(PortalContext? Context, string FailureKey, HttpStatusCode Status)> ResolveContextAsync(
         string deviceHash, long rosterId)
@@ -602,12 +764,13 @@ public sealed class ParentPortalService : IParentPortalService
         if (string.IsNullOrWhiteSpace(deviceHash))
             return (null, "ParentPortalSessionExpired", HttpStatusCode.Unauthorized);
 
-        var grant = await _unitOfWork.ParentPortalAccesses.GetActiveByDeviceAsync(deviceHash);
+        if (rosterId <= 0)
+            return (null, "ParentPortalSessionExpired", HttpStatusCode.NotFound);
+
+        var grant = await _unitOfWork.ParentPortalAccesses
+            .GetActiveByDeviceAndStudentAsync(deviceHash, rosterId);
         if (grant is null)
             return (null, "ParentPortalSessionExpired", HttpStatusCode.Unauthorized);
-
-        if (grant.TeacherStudentId != rosterId)
-            return (null, "ParentPortalSessionExpired", HttpStatusCode.NotFound);
 
         var teacher = await _unitOfWork.Users.GetActiveTeacherByIdAsync(grant.TeacherId);
         if (teacher is null)
@@ -648,29 +811,30 @@ public sealed class ParentPortalService : IParentPortalService
         return entitlements.ParentFollowUpAllowed;
     }
 
-    /// <summary>Teacher display name + subject label (in the reader's language) + the configuration row, in one batch call.</summary>
+    /// <summary>
+    /// Teacher display name + subject label (in the reader's language) + the live configuration row.
+    ///
+    /// ONE query, via the portal's own named repo method. It used to go through
+    /// <c>GetTeacherDashboardDataAsync</c>, a bulk dashboard loader that fires FIVE round-trips to
+    /// produce one name and one label — on every access request and, far worse, on every poll of
+    /// the waiting screen. Do not route this back through the dashboard batch.
+    /// </summary>
     private async Task<(string TeacherName, string SubjectName, TeacherConfiguration? Config)>
         ResolveTeacherHeaderAsync(long teacherId, string? language)
     {
-        var batch = await _unitOfWork.Users.GetTeacherDashboardDataAsync(new List<long> { teacherId });
-        batch.Teachers.TryGetValue(teacherId, out var teacher);
-        batch.Configurations.TryGetValue(teacherId, out var config);
-
-        string teacherName = string.Empty;
-        if (teacher is not null && batch.Users.TryGetValue(teacher.UserId, out var teacherUser))
-            teacherName = teacherUser.FullName;
+        var header = await _unitOfWork.ParentPortalAccesses.GetPortalTeacherHeaderAsync(teacherId);
+        if (header is null)
+            return (string.Empty, string.Empty, null);
 
         bool arabic = ResolveIsArabic(language);
-        string subjectName = teacher?.CustomSubject ?? string.Empty;
-        if (teacher is not null &&
-            batch.TeacherSubjects.TryGetValue(teacherId, out var teacherSubjects) &&
-            teacherSubjects.Any() &&
-            batch.Subjects.TryGetValue(teacherSubjects.First().SubjectId, out var subject))
-        {
-            subjectName = arabic ? subject.NameAr : subject.NameEn;
-        }
+        string? subjectLabel = arabic ? header.SubjectNameAr : header.SubjectNameEn;
 
-        return (teacherName, subjectName, config);
+        // A teacher with no linked subject falls back to their free-text one, exactly as before.
+        string subjectName = string.IsNullOrWhiteSpace(subjectLabel)
+            ? header.CustomSubject ?? string.Empty
+            : subjectLabel;
+
+        return (header.TeacherName, subjectName, header.Configuration);
     }
 
     /// <summary>Explicit request language wins; otherwise fall back to the negotiated Accept-Language culture.</summary>
@@ -716,25 +880,89 @@ public sealed class ParentPortalService : IParentPortalService
     }
 
     /// <summary>
-    /// Fires the teacher notification at most ONCE per hour: if a pending request already existed
-    /// inside the window the teacher was already told, so this burst stays silent.
+    /// Tells the teacher a parent is waiting. The INBOX ROW is written for every request; only the
+    /// PUSH is batched to at most one per hour, so a burst produces one buzz but never loses a
+    /// parent.
+    ///
+    /// Changed 2026-09-11: this used to return early inside the batching window, writing nothing at
+    /// all, so the 2nd..Nth parent in an hour left no trace anywhere the teacher could find — and
+    /// since FCM is unconfigured in production, the row it was skipping was the ONLY signal that
+    /// existed. Do not restore the early return.
     /// </summary>
     private async Task NotifyTeacherAsync(
         long teacherId, string studentName, string? parentName, DateTime? newestPendingBefore, DateTime now)
     {
         try
         {
-            if (newestPendingBefore is not null &&
-                now - newestPendingBefore.Value < NotificationBatchWindow)
-                return;
+            bool alreadyPushedThisWindow = newestPendingBefore is not null &&
+                now - newestPendingBefore.Value < NotificationBatchWindow;
 
             int pendingCount = await _unitOfWork.ParentPortalAccesses.CountPendingForTeacherAsync(teacherId);
-            await _notifier.NotifyPendingRequestsAsync(teacherId, studentName, pendingCount, parentName);
+            await _notifier.NotifyPendingRequestsAsync(
+                teacherId, studentName, pendingCount, parentName, suppressPush: alreadyPushedThisWindow);
         }
         catch (Exception ex)
         {
             // Post-commit side effect — a notification failure must never fail the parent's request.
             _logger.LogWarning(ex, "Parent portal: pending-request notification failed for teacher {TeacherId}", teacherId);
+        }
+    }
+
+    /// <summary>
+    /// Meters how many times we may answer "that student code does not exist" honestly, per device
+    /// and per teacher, inside <see cref="AbuseWindow"/>.
+    ///
+    /// This is what replaced the blanket silence on the unknown-code branch (see the SECURITY block
+    /// in <see cref="RequestAccessAsync"/>). Real parents mistype once or twice; a script walking
+    /// A1, A2, A3… exhausts the budget almost immediately and gets the old, uninformative pending
+    /// payload from then on. Counting happens on the ANSWER, not the attempt, so a parent whose
+    /// codes all resolve never touches it.
+    ///
+    /// Both counters are bumped on every unknown code, so rotating device ids still burns the
+    /// teacher's budget.
+    /// </summary>
+    private async Task<bool> IsUnknownCodeBudgetExhaustedAsync(long teacherId, string deviceHash)
+    {
+        bool deviceExhausted = await BumpAndCheckAsync(
+            $"pp:unknown-code:dev:{deviceHash}", _options.UnknownStudentCodeRepliesPerDevicePerHour);
+        bool teacherExhausted = await BumpAndCheckAsync(
+            $"pp:unknown-code:teacher:{teacherId}", _options.UnknownStudentCodeRepliesPerTeacherPerHour);
+
+        return deviceExhausted || teacherExhausted;
+    }
+
+    /// <summary>
+    /// Counts one use against <paramref name="key"/> and reports whether the budget is now spent.
+    /// A non-positive limit disables the budget (always answer honestly).
+    /// </summary>
+    private async Task<bool> BumpAndCheckAsync(string key, int limit)
+    {
+        if (limit <= 0) return false;
+
+        try
+        {
+            string? stored = await _cache.GetStringAsync(key);
+            int used = int.TryParse(stored, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
+                ? parsed
+                : 0;
+
+            used++;
+
+            await _cache.SetStringAsync(
+                key,
+                used.ToString(CultureInfo.InvariantCulture),
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = AbuseWindow });
+
+            return used > limit;
+        }
+        catch (Exception ex)
+        {
+            // Fail OPEN, deliberately. The cache is a convenience; the portal's own per-browser cap
+            // (10 distinct codes per 30 minutes) is the primary guard, and a cache blip must never
+            // start telling real parents "request sent" for a code that does not exist — that is
+            // the exact failure this whole change exists to remove.
+            _logger.LogWarning(ex, "Parent portal: unknown-code budget check failed for {CacheKey}", key);
+            return false;
         }
     }
 

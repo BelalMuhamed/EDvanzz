@@ -98,7 +98,8 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
         // "approved but phone lost" state. ParentPhoneNumber is deliberately non-unique (siblings
         // share a parent), so this can never trip a unique violation.
         if (dto?.SavePhoneToStudent == true)
-            (result.PhoneSavedToStudent, result.PhoneSaveSkippedReason) = SavePhoneToStudent(grant);
+            (result.PhoneSavedToStudent, result.PhoneSaveSkippedReason) =
+                SavePhoneToStudent(grant, dto.OverwriteStudentPhone);
 
         await _unitOfWork.SaveChangesAsync();
 
@@ -135,6 +136,11 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
             ? ParentPortalAccessStatus.Active
             : ParentPortalAccessStatus.Rejected;
 
+        // Capture numbers only on an approve, and only into empty records. Bulk never overwrites:
+        // the teacher is confirming a whole class at once and cannot be judging each "is this the
+        // mother or the father?" individually. See ParentPortalBulkActionDto.SavePhoneToStudent.
+        bool capturePhones = dto.SavePhoneToStudent && target == ParentPortalAccessStatus.Active;
+
         var now = DateTime.UtcNow;
         var result = new ParentPortalBulkResultDto();
 
@@ -155,6 +161,15 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
                 }
 
                 Apply(grant, target, actingUserId, now);
+
+                // Same tracked-entity trick as the single approve: the roster write joins THIS
+                // SaveChanges, so a bulk approve can never half-apply as "approved but number lost".
+                if (capturePhones)
+                {
+                    var (saved, _) = SavePhoneToStudent(grant, overwrite: false);
+                    if (saved) result.PhonesSaved++;
+                }
+
                 await _unitOfWork.ParentPortalAccesses.UpdateAsync(grant);
                 result.ProcessedIds.Add(id);
                 result.Affected++;
@@ -339,15 +354,20 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
     }
 
     /// <summary>
-    /// Copies the approved parent's number onto the student's roster record when — and only
-    /// when — the record has none. Mutates the TRACKED student so the write joins the caller's
-    /// SaveChanges. Returns (saved, skipReason).
+    /// Copies the approved parent's number onto the student's record. Mutates the TRACKED student
+    /// so the write joins the caller's SaveChanges. Returns (saved, skipReason).
     ///
-    /// An existing number is NEVER overwritten, same or different: the roster is the teacher's own
-    /// data and a portal approval must not quietly rewrite it. The reason literals come from
-    /// <see cref="ParentPortalConstants.PhoneSaveSkipReasons"/> and are part of the wire contract.
+    /// A record with NO number is always filled. A record that already holds a DIFFERENT number is
+    /// only replaced when <paramref name="overwrite"/> says so — an explicit, separately-confirmed
+    /// teacher decision, never a side effect of approving, because the number on file may be a
+    /// second parent rather than a stale one. A record holding the SAME number is left alone and
+    /// reported as already saved.
+    ///
+    /// The reason literals come from <see cref="ParentPortalConstants.PhoneSaveSkipReasons"/> and
+    /// are part of the wire contract.
     /// </summary>
-    private static (bool Saved, string? SkipReason) SavePhoneToStudent(ParentPortalAccess grant)
+    private static (bool Saved, string? SkipReason) SavePhoneToStudent(
+        ParentPortalAccess grant, bool overwrite)
     {
         if (string.IsNullOrWhiteSpace(grant.ClaimedPhone))
             return (false, ParentPortalConstants.PhoneSaveSkipReasons.NoPhoneOnRequest);
@@ -358,9 +378,11 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
 
         if (!string.IsNullOrWhiteSpace(student.ParentPhoneNumber))
         {
-            return EgyptianPhoneNumber.AreSameNumber(grant.ClaimedPhone, student.ParentPhoneNumber)
-                ? (false, ParentPortalConstants.PhoneSaveSkipReasons.AlreadySaved)
-                : (false, ParentPortalConstants.PhoneSaveSkipReasons.StudentHasDifferentPhone);
+            if (EgyptianPhoneNumber.AreSameNumber(grant.ClaimedPhone, student.ParentPhoneNumber))
+                return (false, ParentPortalConstants.PhoneSaveSkipReasons.AlreadySaved);
+
+            if (!overwrite)
+                return (false, ParentPortalConstants.PhoneSaveSkipReasons.StudentHasDifferentPhone);
         }
 
         // Stored in the canonical normalized shape, matching what the roster write paths produce.
@@ -382,6 +404,13 @@ public sealed class TeacherParentPortalService : ITeacherParentPortalService
         PhoneMatchesRoster = EgyptianPhoneNumber.AreSameNumber(
             grant.ClaimedPhone, grant.TeacherStudent?.ParentPhoneNumber),
         StudentHasParentPhone = !string.IsNullOrWhiteSpace(grant.TeacherStudent?.ParentPhoneNumber),
+        // Only when it DIFFERS: showing the teacher the same number twice is noise, and the whole
+        // reason this field exists is the replace-or-keep decision, which only arises on a clash.
+        StudentParentPhone =
+            !string.IsNullOrWhiteSpace(grant.TeacherStudent?.ParentPhoneNumber)
+            && !EgyptianPhoneNumber.AreSameNumber(grant.ClaimedPhone, grant.TeacherStudent!.ParentPhoneNumber)
+                ? grant.TeacherStudent.ParentPhoneNumber
+                : null,
         RequestedAt = grant.RequestedAt,
         Status = grant.Status
     };

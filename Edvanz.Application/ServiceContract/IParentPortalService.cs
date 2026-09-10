@@ -67,7 +67,14 @@ public interface IParentPortalService
     /// <c>state</c> the portal renders directly (active / pending / rejected / revoked /
     /// disabled / studentRemoved / none) — never an error for a merely-unapproved device.
     /// </summary>
-    Task<Result<ParentPortalAccessStateDto>> GetAccessStateAsync(string deviceHash);
+    /// <param name="deviceHash">Hashed device id from the X-Portal-Device header.</param>
+    /// <param name="rosterId">
+    /// Which followed child to describe. Omit for the newest active grant — the behaviour before
+    /// multi-child support, and what a one-child parent always gets. An id this device holds no
+    /// active grant for falls back to the newest rather than erroring: the selection is a UI
+    /// preference, and a child whose access was revoked must degrade to the other child.
+    /// </param>
+    Task<Result<ParentPortalAccessStateDto>> GetAccessStateAsync(string deviceHash, long? rosterId = null);
 
     /// <summary>The whole portal home in one call: header + attendance + payments + grades, each behind its own visibility flag.</summary>
     Task<Result<ParentPortalDashboardDto>> GetDashboardAsync(string deviceHash, long rosterId);

@@ -47,6 +47,63 @@ public class ParentPortalAccessRepo : GenericRepo<ParentPortalAccess, long>, IPa
     }
 
     /// <inheritdoc />
+    public async Task<ParentPortalAccess?> GetActiveByDeviceAndStudentAsync(
+        string deviceHash, long teacherStudentId)
+    {
+        // Served by UX_PPA_Student_Device_Live, which guarantees at most one live row per
+        // (student, device) — so no ordering is needed to make this deterministic.
+        return await _context.Set<ParentPortalAccess>()
+            .AsNoTracking()
+            .Include(a => a.TeacherStudent)
+            .FirstOrDefaultAsync(a =>
+                a.DeviceHash == deviceHash &&
+                a.TeacherStudentId == teacherStudentId &&
+                a.Status == ParentPortalAccessStatus.Active);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ParentPortalAccess>> GetActiveGrantsByDeviceAsync(string deviceHash)
+    {
+        // Served by IX_PPA_DeviceHash. Newest first so the default selection matches what the
+        // single-grant lookup would have returned, keeping one-child behaviour byte-identical.
+        return await _context.Set<ParentPortalAccess>()
+            .AsNoTracking()
+            .Include(a => a.TeacherStudent)
+            .Where(a => a.DeviceHash == deviceHash && a.Status == ParentPortalAccessStatus.Active)
+            .OrderByDescending(a => a.RequestedAt)
+            .ThenByDescending(a => a.Id)
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
+    public async Task<ParentPortalTeacherHeader?> GetPortalTeacherHeaderAsync(long teacherId)
+    {
+        // ONE round-trip: the subject and configuration ride along as correlated subqueries rather
+        // than as four more calls. The subject is projected to its two labels instead of the entity
+        // so the reader's language is chosen in the service, where the culture lives.
+        return await _context.Set<Teacher>()
+            .AsNoTracking()
+            .Where(t => t.Id == teacherId && t.DeletedAt == null)
+            .Select(t => new ParentPortalTeacherHeader(
+                _context.Users
+                    .Where(u => u.Id == t.UserId)
+                    .Select(u => u.FullName)
+                    .FirstOrDefault() ?? string.Empty,
+                _context.Set<TeacherSubject>()
+                    .Where(ts => ts.TeacherId == t.Id)
+                    .Join(_context.Set<Subject>(), ts => ts.SubjectId, s => s.Id, (ts, s) => s.NameAr)
+                    .FirstOrDefault(),
+                _context.Set<TeacherSubject>()
+                    .Where(ts => ts.TeacherId == t.Id)
+                    .Join(_context.Set<Subject>(), ts => ts.SubjectId, s => s.Id, (ts, s) => s.NameEn)
+                    .FirstOrDefault(),
+                t.CustomSubject,
+                _context.Set<TeacherConfiguration>()
+                    .FirstOrDefault(c => c.TeacherId == t.Id)))
+            .FirstOrDefaultAsync();
+    }
+
+    /// <inheritdoc />
     public async Task<ParentPortalAccess?> GetLatestByDeviceAsync(string deviceHash)
     {
         return await _context.Set<ParentPortalAccess>()

@@ -2608,7 +2608,16 @@
     <value>اكتب كود الطالب، زي A12.</value>
   </data>
   <data name="ParentPortalPhoneFormat" xml:space="preserve">
-    <value>اكتب رقم موبايل مصري صح — ١١ رقم ويبدأ بـ 01 — أو سيبه فاضي.</value>
+    <value>اكتب رقم موبايل مصري صح — ١١ رقم ويبدأ بـ 01.</value>
+  </data>
+  <data name="ParentPortalPhoneRequired" xml:space="preserve">
+    <value>اكتب رقم موبايلك — المدرس محتاجه عشان يعرفك ويدخّلك على طول.</value>
+  </data>
+  <data name="ParentPortalStudentCodeNotFound" xml:space="preserve">
+    <value>كود الطالب ده مش موجود عند المدرس. راجع الكود واكتبه تاني، ولو مش معاك اطلبه من المدرس.</value>
+  </data>
+  <data name="ParentPortalRequestPreviouslyRejected" xml:space="preserve">
+    <value>الطلب ده اترفض قبل كده. كلّم المدرس يضيف رقم موبايلك على بيانات ابنك، وهتدخل على طول من غير انتظار.</value>
   </data>
   <data name="ParentPortalNameLength" xml:space="preserve">
     <value>اكتب اسمك عشان المدرس يعرف مين اللي بيطلب — من حرفين لـ ٦٠ حرف.</value>

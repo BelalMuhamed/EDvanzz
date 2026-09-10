@@ -40,6 +40,23 @@ public class ParentPortalOptions
     public bool RequireParentName { get; set; } = false;
 
     /// <summary>
+    /// When true the parent's PHONE is required on an access request (400
+    /// <c>ParentPortalPhoneRequired</c> when blank). Default FALSE for the same deploy-ordering
+    /// reason as <see cref="RequireParentName"/>: the API ships first, and a portal build that
+    /// still treats the field as optional must keep working rather than 400-ing every parent.
+    ///
+    /// Flip <c>ParentPortal__RequirePhone</c> in App Service settings once the portal drop that
+    /// marks the field required is confirmed live — no redeploy needed.
+    ///
+    /// WHY IT MATTERS (2026-09-11): the phone is the ONLY thing that makes access survive a lost
+    /// device cookie, and it is what lets the roster-phone rule admit a parent with no teacher
+    /// involvement at all. A blank phone means the parent's grant is pinned to one browser
+    /// forever, and an iOS in-app browser that drops the cookie strands them even after the
+    /// teacher approved.
+    /// </summary>
+    public bool RequirePhone { get; set; } = false;
+
+    /// <summary>
     /// Abuse cap: access requests one DEVICE may create per rolling hour. Above it the endpoint
     /// returns <c>ParentPortalTooManyRequests</c> (429) instead of writing another row.
     /// </summary>
@@ -50,4 +67,28 @@ public class ParentPortalOptions
     /// inbox from being flooded even when the attacker rotates device ids.
     /// </summary>
     public int RequestsPerTeacherPerHour { get; set; } = 50;
+
+    /// <summary>
+    /// SCANNER BUDGET, per DEVICE, per rolling hour — see
+    /// <c>ParentPortalService.RequestAccessAsync</c> for the full rationale.
+    ///
+    /// A request naming a student code that does not exist is answered HONESTLY ("we could not
+    /// find this code"), because a real parent mistyping a code is far commoner than an attacker
+    /// and the silent alternative stranded them forever. That honesty is only safe because it runs
+    /// out: once a device has been told "not found" this many times inside an hour, the endpoint
+    /// reverts to the neutral pending payload that reveals nothing, so walking a teacher's roster
+    /// (codes are sequential A1..Z999) stops paying after the first handful of probes.
+    ///
+    /// Sized well above any real parent: the portal already caps a browser at 10 DISTINCT student
+    /// codes per 30 minutes, so a parent correcting a typo never approaches this. Non-positive
+    /// disables the budget, meaning always answer honestly.
+    /// </summary>
+    public int UnknownStudentCodeRepliesPerDevicePerHour { get; set; } = 8;
+
+    /// <summary>
+    /// The same scanner budget aimed at one TEACHER, so rotating device ids does not buy an
+    /// attacker an unlimited supply of honest answers about that teacher's student codes.
+    /// Non-positive disables it.
+    /// </summary>
+    public int UnknownStudentCodeRepliesPerTeacherPerHour { get; set; } = 40;
 }

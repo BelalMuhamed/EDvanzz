@@ -35,7 +35,14 @@ public static class ParentPortalConstants
         /// <summary>Approved: the device may read the student's shared data.</summary>
         public const string Active = "active";
 
-        /// <summary>Waiting for the teacher. ALSO returned for a discarded request — see the security note in ParentPortalService.</summary>
+        /// <summary>
+        /// Waiting for the teacher — and, since 2026-09-11, ONLY that. It used to double as the
+        /// answer for a request that was discarded rather than queued (an unknown student code, a
+        /// post-rejection re-submit), which meant the portal could not tell a parent who was
+        /// genuinely waiting from one whose request never existed, and showed both the same
+        /// forever-refreshing screen. Those cases now fail honestly with their own message; do not
+        /// route a discarded request back through this state.
+        /// </summary>
         public const string Pending = "pending";
 
         /// <summary>The teacher rejected the request.</summary>

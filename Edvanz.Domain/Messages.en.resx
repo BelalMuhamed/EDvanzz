@@ -2620,7 +2620,16 @@
     <value>Enter the student code, for example A12.</value>
   </data>
   <data name="ParentPortalPhoneFormat" xml:space="preserve">
-    <value>Enter a valid Egyptian mobile number — 11 digits starting with 01 — or leave it empty.</value>
+    <value>Enter a valid Egyptian mobile number — 11 digits starting with 01.</value>
+  </data>
+  <data name="ParentPortalPhoneRequired" xml:space="preserve">
+    <value>Enter your mobile number — the teacher needs it to recognise you and let you in straight away.</value>
+  </data>
+  <data name="ParentPortalStudentCodeNotFound" xml:space="preserve">
+    <value>We could not find this student code with this teacher. Check it and try again, or ask the teacher for it.</value>
+  </data>
+  <data name="ParentPortalRequestPreviouslyRejected" xml:space="preserve">
+    <value>This request was turned down earlier. Ask the teacher to add your mobile number to your child's record and you will be let in straight away.</value>
   </data>
   <data name="ParentPortalNameLength" xml:space="preserve">
     <value>Write your name so the teacher knows who's asking — between 2 and 60 letters.</value>

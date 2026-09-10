@@ -871,6 +871,89 @@ creation instead). `IsManagerialAsync` is kept as the legacy alias for
   ManagerialPlus; the gate reads it through the same current-subscription projection.
 - Migration `20260903154829_AddManagerialPlusPlan` (additive columns + seeded-row updates).
 
+### 7.7 Parent portal sign-in — an unknown student code is REJECTED, not swallowed (reversed 2026-09-11)
+
+**DELIBERATE REVERSAL of the original enumeration design. Do NOT restore the silent behaviour.**
+The portal (`~/Desktop/Edvanz-Application/EdvanzParentPortal`, own git, manual FTP) asks a parent
+for TWO codes; the teacher's own WhatsApp share message asked for ONE (the teacher code), so
+parents arrived not knowing the second, guessed, and `RequestAccessAsync` answered a nonexistent
+`StudentCode` with the byte-identical "pending" payload a real request gets — **writing nothing**.
+The portal's `/pending` then treated every unrecognised state (including `none`, i.e. *no row
+exists*) as "still waiting" and refreshed every 15s **forever**. The parent saw «طلبك اتبعت»; no
+teacher ever saw a request. Reproduced on prod 2026-09-11: fake code → `pendingCount: 0`, real code
+→ inbox row, **identical screen for both**.
+
+- **Unknown student code → 404 `ParentPortalStudentCodeNotFound`**, an inline error under that
+  field exactly like a wrong teacher code. Enumeration is now a **budget, not a blanket**:
+  `UnknownStudentCodeRepliesPer{Device,Teacher}PerHour` (8 / 40, `IDistributedCache`) meter honest
+  answers and revert to the old neutral payload once spent — fail **open** on a cache error. Student
+  name/code/id are still only returned on an `active` result: *that* a code exists is answerable,
+  *whose* it is is not.
+- **Trust is evaluated BEFORE the post-rejection cooldown** (`ParentPortalService` step 5b, then
+  5c). It used to be the other way round, which meant the one remedy the product advertises — the
+  teacher adding the parent's number to the student record — silently did nothing for 24h. The
+  cooldown now answers 409 `ParentPortalRequestPreviouslyRejected` and names that remedy.
+- **A live PENDING row is RE-EVALUATED for trust and promoted in place.** The `existing` branch
+  returned "still waiting" without re-checking anything, so a parent who first submitted with no
+  phone and then supplied one — or whose TEACHER added the number to the student record — stayed
+  queued forever and only a manual approval could release them. That is the same remedy the cooldown
+  message and the waiting screen both advertise, silently doing nothing. `GetLiveByStudentAndDeviceAsync`
+  loads the row TRACKED with the comment "the request path may promote this row to Active"; nothing
+  ever did. Promotion sets Active/RespondedAt/AutoApproved/Origin, stores the number that earned it
+  (so a later device change is re-admitted), leaves `RespondedByUserId` NULL, and on a write failure
+  returns pending rather than lying. Trust lives in ONE place — `EvaluateTrustAsync`, shared by the
+  new-request and promote paths; never re-inline it, or the two answers drift.
+- **Phone REQUIRED** (`ParentPortal__RequirePhone`, default false for deploy ordering exactly like
+  `RequireParentName`; flip BOTH after the portal upload). It is the only thing that admits a parent
+  with zero teacher involvement, the only detail a teacher can recognise, and the only way back in
+  after a lost device cookie — which iOS in-app browsers drop routinely.
+- **The inbox row is now written for EVERY request**; only the push is batched to one per hour
+  (`suppressPush`). The old early-return wrote nothing at all for the 2nd..Nth parent in an hour —
+  and `Firebase__CredentialsPath` on prod is a 1-char placeholder with no vault secret, so FCM
+  no-ops platform-wide and that row is the ONLY signal a teacher gets.
+- Portal side: `/pending` renders **only** a real `pending` (anything else → "no request waiting" +
+  a way back to the form); a `?retry=1` route that clears the remembered state; API `code` mapped to
+  the FIELD that caused it (`signin_error_field`); student code upper-cased with inner spaces
+  stripped; phone validated locally against a PHP mirror of `EgyptianPhoneNumber.Normalize` (keep
+  the two in step); the per-hour throttle keyed **per IP+device** (Egyptian carrier CGNAT made a
+  per-IP bucket punish unrelated parents) and 10 distinct codes per 30 min.
+- **`includes/mock.php` returned 404 for state `none` while the real API returns 200 + `state:
+  "none"`** — that fixture lie is *why* the waiting-screen bug survived review. Fixtures mirror the
+  API, never the convenient behaviour.
+
+**Same-day follow-up audit — five more defects on this path, all fixed 2026-09-11:**
+
+- **SIBLINGS: a device may hold a live grant per child.** Reads resolved a device to its NEWEST
+  active grant and required the route id to equal it, so a parent who signed in for a second child
+  could never reach the first again — re-entering the older code still landed on the newer one, and
+  the only escape was to end following altogether. `GetActiveByDeviceAndStudentAsync` authorizes the
+  route id against the device's OWN grants (identical strictness, finally correct for two children),
+  `GET /access?rosterId=` selects which child the payload describes, `students[]` lists them all,
+  and the portal renders switcher chips in the app bar — whose doc comment had promised exactly this
+  since day one. Selection lives in the PHP session, is re-synced from what the API actually
+  returned (a revoked child degrades to the other rather than erroring), and the access cache key
+  carries the child id — keying it on "access" alone serves the previous child for a minute after
+  every switch.
+- **The waiting screen polled twice over.** `<meta refresh 15s>` AND a 5s JS fetch, each a full
+  render plus an uncached API call ≈ 960 requests/hour per waiting parent, indefinitely. portal.js
+  now REMOVES the meta tag when it takes over and backs off 5s → 60s (resetting on tab focus); the
+  no-JS fallback is 30s.
+- **`ResolveTeacherHeaderAsync` cost FIVE round-trips** — one name and one label via the bulk
+  dashboard loader, on every request and every poll. Now one query, `GetPortalTeacherHeaderAsync`.
+  Deliberately uncached: it carries the config that gates eligibility and visibility.
+- **Phone capture from the inbox.** `BulkResolveAsync` captured NOTHING, the worst possible place
+  for that gap — the select-all lane exists precisely because a whole class arrives at once, so the
+  teacher's highest-volume action guaranteed every one of those parents would need approving again.
+  Bulk now fills EMPTY records only (`savePhoneToStudent`, ON by default in the app, NEVER
+  overwrites — nobody judges forty "mother or father?" questions in one tap) and reports
+  `phonesSaved`. Single approve may REPLACE a differing number via a separate
+  `overwriteStudentPhone` flag behind its own confirmation naming both numbers; the number on file
+  may be a second parent rather than a stale one, and only the teacher knows which.
+  `studentParentPhone` is exposed on the list row (only when it differs) so that choice is informed.
+- The approval sheet rendered a phone icon beside an empty line for requests carrying no phone, and
+  the missing-parent-phone nudge lived only in Settings — it is now on the inbox itself, where the
+  teacher is actively approving people who would not have needed approving at all.
+
 ---
 
 ## 8. Known Bugs (Fixed — Do Not Reintroduce)
@@ -889,6 +972,7 @@ creation instead). `IsManagerialAsync` is kept as the legacy alias for
 | BUG-11 | `20260708193718`/`20260708220307` phone-index migrations never applied on prod | The first created a GLOBAL unique `ParentPhoneNumber` index that included soft-deleted rows → failed on an existing duplicate; the second then failed dropping the index the first never created. Both re-ran and re-failed silently on every deploy (no `-b`, see CI note below), so prod had NO phone uniqueness (duplicate-phone protection relies on the DB index via `ResolveUniqueViolationKey`) and was missing `IX_PP_TeacherId_Status_PeriodStart`. Fixed 2026-07-16: both files deleted (BUG-9 precedent) and `20260715231605_RepairTeacherStudentPhoneIndexes` defensively converges all environments — parent phone index recreated NON-unique (siblings share it — see the uniqueness rule below), student phone unique filtered, active student-phone duplicates cleaned (earliest row keeps the phone), PP index caught up. |
 | BUG-10 | `20260715202558_AddSessionOccurrenceSlotKeys` backfill referenced same-batch new columns | The migration did `AddColumn DayPositionIndex/WeekStartDate` then a bare `migrationBuilder.Sql` **UPDATE** setting those columns. EF emits a migration's ops as ONE `GO`-less batch, and the idempotent deploy script keeps them in one batch, so SQL Server bound the UPDATE at batch-compile time when the columns didn't exist yet → **error 207 "Invalid column name"** (under the idempotent IF-wrapper it surfaced as a downstream **1505** duplicate-key: the un-backfilled default `(2000-01-01,1)` rows collide on the new unique index). The migration silently failed to apply (see the CI note below), yet the code that queries the columns shipped → prod 500'd on every attendance call (the 2026-07-15/16 outage). **Fix:** wrap the backfill UPDATE in `EXEC(N'...')` so name resolution is deferred to run time, after the columns exist. Applied to prod out-of-band and recorded in `__EFMigrationsHistory`. Never backfill a just-added column with a bare `Sql()` UPDATE in the same migration — use `EXEC()` (or a separate migration). |
 | BUG-12 | `ParentUserController` (all 10 endpoints) | Mass horizontal IDOR: the controller had NO `[Authorize]`/`[ModulePermission]` and injected no identity service, so `parentUserId`/`childId` were trusted straight from the route — any authenticated user (any role) could read/modify/delete ANY parent's profile, dashboard, and children. Fixed 2026-07-16 (commit `ece9fab`): identity is resolved ONLY from the JWT via `ResolveParentUserIdAsync()` (`User.Id` → active `ParentUser`); the `{parentUserId}` route segment is kept for wire-compat but IGNORED (0/null/wrong/mismatched all behave identically); every `childId` is scoped to the resolved parent inside the service (`GetActiveChildAsync(parentUserId, childId)`); class `[Authorize]` + per-endpoint `[ModulePermission(roles:["Parent"], roleOnly:true)]` added; `InitializeParentUser` forces `dto.UserId` from the JWT (registration still initializes parents server-side via `UserService`, unaffected). Mirrors `ParentAttendanceController`/`ParentPaymentController`. Generalizes §3.3 — never trust a route/body identity id (teacherId, parentUserId, childId); resolve from the token. |
+| BUG-14 | Parent portal: a wrong student code was answered "request sent" and waited forever | `RequestAccessAsync` returned the neutral pending payload for a nonexistent `StudentCode` **without writing a row**, and the portal's `/pending` treated the resulting `state: "none"` as "still waiting", refreshing every 15s indefinitely. The parent believed they had asked; no teacher could ever see or approve anything; support could not tell the case apart from a slow teacher. Fixed 2026-09-11 — honest 404 + a metered enumeration budget, and `/pending` renders only a genuine `pending`. Full contract in §7.7. **Never make a discarded request answer `pending` again**, and never let a screen assert a state the API did not return. |
 | BUG-13 | `MessagingController` auth commented + `TeacherController.GetTeachers` (`GET /api/teacher/list`) ungated | Two authorization holes closed 2026-07-16 (commit `000f009`). (a) MessagingController's class `[Authorize]` and the `send`/`history`/`resend` `[ModulePermission]` gates were commented out (this was §7.1 P0-A) → any authenticated caller could send manual messages, read history, and resend; restored verbatim — `"SendManual"`/`"ViewHistory"` are registered Messaging permissions (`DbInitializer`), `roleOnly:false` runs the `PermissionRequirement(module,permission)` check, and the tenant is still JWT-forced by `TenantScopeFilter`. (b) `GetTeachers` is documented Super-Admin-only but carried no role gate → any authenticated user could enumerate every teacher (name, code, phone, capacity, subscription); added `[ModulePermission(roles:["SuperAdmin"], roleOnly:true)]` (`roleOnly:true` → role-membership gate). Do not re-comment controller auth attributes or ship an admin-only endpoint without a role gate. |
 
 **CI migration delivery — root cause of the 2026-07-15/16 attendance outage (deploy.yml `Apply EF migrations`) — RESOLVED 2026-07-16.** `azure/sql-action@v2` used to run the multi-batch idempotent `migrate.sql` (one `BEGIN TRAN…COMMIT` per migration) via go-sqlcmd **without `-b`**, so when a migration's batch errored, its own transaction rolled back (migration NOT recorded) but the runner **continued to the next migration and still exited 0** — a broken migration was silently skipped while the code that needed it deployed anyway. This is why BUG-10 shipped, and it also silently skipped the `20260708193718`/`20260708220307` phone-index migrations on every deploy since 2026-07-08 (see BUG-11). Fixed by: (a) BUG-11's repair migration clearing the failing backlog, (b) `arguments: '-b'` on the sql-action step (any SQL error → non-zero exit → job fails BEFORE `az webapp deploy`), and (c) the two pre-Azure migration gates described in §0 (model-coverage check + fresh-DB rehearsal of `migrate.sql`). Do not remove `-b` or the gates.

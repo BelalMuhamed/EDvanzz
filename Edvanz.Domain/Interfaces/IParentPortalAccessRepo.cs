@@ -29,6 +29,39 @@ public interface IParentPortalAccessRepo : IGenericRepo<ParentPortalAccess, long
     Task<ParentPortalAccess?> GetActiveByDeviceAsync(string deviceHash);
 
     /// <summary>
+    /// The ACTIVE grant this device holds FOR ONE NAMED STUDENT, with its
+    /// <see cref="ParentPortalAccess.TeacherStudent"/> loaded.
+    ///
+    /// This is what makes a parent of siblings work. Reads used to resolve the device to its
+    /// NEWEST active grant and then demand the requested roster id match it, so a parent who
+    /// signed in for a second child could never reach the first again — every screen followed the
+    /// newest grant, and re-entering the older child's code still landed on the newer one. The
+    /// tenant guard is unchanged and just as strict: a roster id this device holds no ACTIVE grant
+    /// for returns null, exactly as a foreign id always did.
+    /// </summary>
+    Task<ParentPortalAccess?> GetActiveByDeviceAndStudentAsync(string deviceHash, long teacherStudentId);
+
+    /// <summary>
+    /// EVERY active grant on this device, newest first, each with its
+    /// <see cref="ParentPortalAccess.TeacherStudent"/> loaded — the children this browser follows.
+    /// Drives the portal's child switcher; a single-child parent simply gets a one-item list.
+    /// </summary>
+    Task<IReadOnlyList<ParentPortalAccess>> GetActiveGrantsByDeviceAsync(string deviceHash);
+
+    /// <summary>
+    /// The teacher's display name, subject labels and configuration row for the portal header, in
+    /// ONE query.
+    ///
+    /// Exists because the portal used to build this from <c>GetTeacherDashboardDataAsync</c>, a
+    /// BULK dashboard loader that issues five separate round-trips (teachers, users,
+    /// teacher-subjects, subjects, configurations) to produce one name and one label — and it runs
+    /// on every access request AND every poll of the waiting screen. Deliberately NOT cached: the
+    /// configuration it returns gates portal eligibility and per-section visibility, and a teacher
+    /// who switches sharing off must have it take effect on the next read, not minutes later.
+    /// </summary>
+    Task<ParentPortalTeacherHeader?> GetPortalTeacherHeaderAsync(long teacherId);
+
+    /// <summary>
     /// The NEWEST grant row for this device regardless of status (including terminal
     /// Rejected/Revoked rows), with its <see cref="ParentPortalAccess.TeacherStudent"/> loaded.
     /// Drives the portal's "where do I stand?" screen so a rejected or revoked parent gets a
@@ -126,3 +159,15 @@ public interface IParentPortalAccessRepo : IGenericRepo<ParentPortalAccess, long
     /// </summary>
     Task DeleteForStudentAsync(long teacherStudentId);
 }
+
+/// <summary>
+/// Exactly what the parent portal needs to render a header and decide eligibility, fetched in one
+/// query. <see cref="Configuration"/> is the live row — visibility flags and the portal opt-in are
+/// read straight off it, so it must never be served from a cache.
+/// </summary>
+public sealed record ParentPortalTeacherHeader(
+    string TeacherName,
+    string? SubjectNameAr,
+    string? SubjectNameEn,
+    string? CustomSubject,
+    TeacherConfiguration? Configuration);

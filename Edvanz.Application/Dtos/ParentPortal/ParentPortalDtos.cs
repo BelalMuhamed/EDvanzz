@@ -29,9 +29,19 @@ public class ParentPortalAccessRequestDto
     public string StudentCode { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional Egyptian mobile number. When it matches the roster record's parent phone the grant
-    /// is auto-approved; otherwise the request waits for the teacher. Any common spelling is
+    /// The parent's Egyptian mobile number. When it matches the student record's parent phone the
+    /// grant is auto-approved; otherwise the request waits for the teacher. Any common spelling is
     /// accepted (Arabic-Indic digits, spaces, +20 …) — it is normalized server-side.
+    ///
+    /// REQUIRED once <c>ParentPortal__RequirePhone</c> is on (400 <c>ParentPortalPhoneRequired</c>
+    /// when blank); the flag exists only so the API can ship before the portal build that marks the
+    /// field required. It is not a formality: the phone is what admits a parent with no teacher
+    /// involvement at all, and the ONLY thing that lets an approved parent back in from a new
+    /// handset or a browser that lost its cookie. A phone-less grant is pinned to one browser
+    /// forever.
+    ///
+    /// Same reason as <see cref="ParentName"/> for having no <c>[Required]</c> attribute: the check
+    /// lives in the service so the failure is localized.
     /// </summary>
     public string? PhoneNumber { get; set; }
 
@@ -137,13 +147,46 @@ public class ParentPortalAccessStateDto
     /// <summary>Null unless the grant is (or was) approved.</summary>
     public string? StudentCode { get; set; }
 
-    /// <summary>The ONLY roster id this device may read. Null unless approved.</summary>
+    /// <summary>
+    /// The roster id this response DESCRIBES — the selected child. Null unless approved.
+    ///
+    /// No longer "the only id this device may read": a device may hold an active grant per child
+    /// (see <see cref="Students"/>). It is still the only id this PAYLOAD describes, and a read for
+    /// any other id is still authorized against the device's own grants, never trusted from the
+    /// route.
+    /// </summary>
     public long? RosterId { get; set; }
 
     /// <summary>The student's current session name, when assigned to one.</summary>
     public string? SessionName { get; set; }
 
+    /// <summary>
+    /// EVERY child this browser currently follows, newest grant first — the child switcher.
+    ///
+    /// Added 2026-09-11. Reads used to resolve a device to its newest active grant alone, so a
+    /// parent of siblings who signed in for a second child silently lost the first: every screen
+    /// followed the newest grant, and re-entering the older child's code still landed on the newer
+    /// one. The only escape was to end following altogether. Empty on any non-active state, and a
+    /// single-child parent gets a one-item list, so nothing changes for them.
+    /// </summary>
+    public List<ParentPortalFollowedStudentDto> Students { get; set; } = new();
+
     public ParentPortalVisibilityDto Visibility { get; set; } = new();
+}
+
+/// <summary>
+/// One child a browser follows. Carries its own teacher/subject because the two children may sit
+/// with DIFFERENT teachers, and the switcher has to label them apart.
+/// </summary>
+public class ParentPortalFollowedStudentDto
+{
+    public long RosterId { get; set; }
+    public string StudentName { get; set; } = string.Empty;
+    public string StudentCode { get; set; } = string.Empty;
+    public string TeacherName { get; set; } = string.Empty;
+
+    /// <summary>True for the child this payload describes.</summary>
+    public bool IsSelected { get; set; }
 }
 
 /// <summary>Header block shared by the portal's dashboard screen.</summary>

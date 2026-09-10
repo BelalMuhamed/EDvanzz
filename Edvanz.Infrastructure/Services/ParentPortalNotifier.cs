@@ -40,19 +40,21 @@ public class ParentPortalNotifier : IParentPortalNotifier
 
     /// <inheritdoc />
     public async Task NotifyPendingRequestsAsync(
-        long teacherId, string studentName, int pendingCount, string? parentName = null)
+        long teacherId, string studentName, int pendingCount, string? parentName = null,
+        bool suppressPush = false)
     {
         var teacher = await _unitOfWork.Users.GetTeacherByIdAsync(teacherId);
         if (teacher is null) return;
 
-        // One row = name the people; a burst = give the count instead (the caller already
-        // guarantees at most one of these per teacher per hour).
-        //
         // Naming the PARENT is the point: "someone wants to follow Ahmed" tells the teacher
-        // nothing they can act on. The anonymous wording survives only for grants written before
-        // the portal collected a name — new requests always carry one.
-        bool batched = pendingCount > 1;
-        bool named = !batched && !string.IsNullOrWhiteSpace(parentName);
+        // nothing they can act on. So a named request is ALWAYS announced by name — one inbox row
+        // describes one parent, and rolling several into "3 parents are waiting" would throw away
+        // the only detail the teacher can decide on.
+        //
+        // The anonymous wording survives only for requests carrying no name (grants written before
+        // the portal collected one), and only there does the count still earn its place.
+        bool named = !string.IsNullOrWhiteSpace(parentName);
+        bool batched = !named && pendingCount > 1;
 
         string messageKey = batched
             ? "ParentPortalNewRequestsNotification"
@@ -74,7 +76,7 @@ public class ParentPortalNotifier : IParentPortalNotifier
         {
             Category = NotificationCategory.notifiction,
             Screen = TeacherDeepLink
-        });
+        }, suppressPush);
     }
 
     /// <summary>
@@ -102,8 +104,12 @@ public class ParentPortalNotifier : IParentPortalNotifier
         }
     }
 
-    private async Task PersistAndPushAsync(long recipientUserId, string title, string body, PushPayload payload)
+    private async Task PersistAndPushAsync(
+        long recipientUserId, string title, string body, PushPayload payload, bool suppressPush)
     {
+        // The inbox row is written unconditionally — it is the durable record the teacher can go
+        // back and find, and the only signal at all when push is unavailable. Only the buzz is
+        // ever withheld.
         await _unitOfWork.UserNotificationsRepo.InsertNotificationAsync(new UserNotification
         {
             UserId = recipientUserId,
@@ -117,6 +123,8 @@ public class ParentPortalNotifier : IParentPortalNotifier
         });
 
         await _unitOfWork.SaveChangesAsync();
+
+        if (suppressPush) return;
 
         var tokens = await _unitOfWork.UserDeviceTokensRepo.GetActiveTokensForUserAsync(recipientUserId);
         foreach (var token in tokens)
