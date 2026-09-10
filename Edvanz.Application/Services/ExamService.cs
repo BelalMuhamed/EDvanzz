@@ -711,6 +711,18 @@ public class ExamService : IExamService
                 { results.Add(FailItem(studentId, "AttendanceNotRecordedForExam")); continue; }
             }
 
+            // Concurrency is judged PER ROW, before anything is written: a student whose row moved on
+            // since the client read it is reported on their own line (with the current server values so
+            // the client can show what it became and offer to re-apply), and the rest of the batch still
+            // saves. Letting EF discover this at SaveChanges would throw once and roll back every other
+            // student's grade — a whole class of entry lost to one stale row. Checked LAST so a clearer
+            // reason (absent, out of range) wins over "someone else edited this".
+            if (!o.RowVersion.AsSpan().SequenceEqual(item.RowVersion))
+            {
+                results.Add(ConflictItem(o));
+                continue;
+            }
+
             toApply.Add((o, item));
         }
 
@@ -754,7 +766,9 @@ public class ExamService : IExamService
 
                     await _unitOfWork.ExamHomeworkRepo.UpdateObligationAsync(o);
                     await _unitOfWork.ExamHomeworkRepo.AddAuditLogAsync(audit);
-                    _unitOfWork.ExamHomeworkRepo.SetObligationOriginalRowVersion(o, item.RowVersion);
+                    // No SetObligationOriginalRowVersion: the client's token was matched against the
+                    // row above, so EF's own original value (from that same read) IS the client's token.
+                    // The check it still performs now covers only the read→write window.
                 }
 
                 await _unitOfWork.SaveChangesAsync();
@@ -762,6 +776,9 @@ public class ExamService : IExamService
             }
             catch (DbUpdateConcurrencyException)
             {
+                // Only reachable when a row changed between the read above and this write — a window of
+                // milliseconds now that stale tokens are rejected per row. Still a whole-batch 409, but
+                // the client refreshes its tokens and can re-send, instead of looping on dead ones.
                 await _unitOfWork.RollbackAsync();
                 return Result<BatchGradeResultDto>.Failure(
                     _localizer, "ObligationConcurrencyConflict", HttpStatusCode.Conflict);
@@ -995,6 +1012,22 @@ public class ExamService : IExamService
 
     private static BatchGradeItemResultDto FailItem(long teacherStudentId, string code) =>
         new() { TeacherStudentId = teacherStudentId, Success = false, Code = code };
+
+    /// <summary>
+    /// A row whose concurrency token no longer matches. Carries the CURRENT server state — status,
+    /// grade and a fresh token — so the client can show what the row became and re-apply the
+    /// teacher's value without making her retype it or reload the screen.
+    /// </summary>
+    private static BatchGradeItemResultDto ConflictItem(StudentAssignmentObligation o) => new()
+    {
+        TeacherStudentId = o.TeacherStudentId,
+        ObligationId = o.Id,
+        Success = false,
+        Code = "ObligationConcurrencyConflict",
+        Status = o.Status.ToString(),
+        Grade = o.GradeValue,
+        RowVersion = Convert.ToBase64String(o.RowVersion),
+    };
 
     private static bool IsAttended(ObligationStatus status) =>
         status == ObligationStatus.Attended || status == ObligationStatus.AttendedWithGrade;

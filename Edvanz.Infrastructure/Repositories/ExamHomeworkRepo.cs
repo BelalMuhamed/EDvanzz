@@ -510,7 +510,10 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
 
         // Project to TrackingViewRow inside SQL — avoids materializing entities.
         var items = await query
+            // Student names repeat in a large roster; without a unique tiebreaker SQL Server is free
+            // to order ties differently per page, which repeats some students and skips others.
             .OrderBy(o => o.TeacherStudent.StudentName)
+            .ThenBy(o => o.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(o => new TrackingViewRow
@@ -567,7 +570,10 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
         int totalCount = await query.CountAsync();
 
         var items = await query
+            // Student names repeat in a large roster; without a unique tiebreaker SQL Server is free
+            // to order ties differently per page, which repeats some students and skips others.
             .OrderBy(o => o.TeacherStudent.StudentName)
+            .ThenBy(o => o.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(o => new TrackingViewRow
@@ -1405,18 +1411,27 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
 
         if (clearGrade)
         {
-            return await query.ExecuteUpdateAsync(setters => setters
-                .SetProperty(o => o.Status, newStatus)
-                .SetProperty(o => o.GradeValue, (decimal?)null)
-                .SetProperty(o => o.IsGradeEntered, false)
-                .SetProperty(o => o.LastUpdatedByUserId, (long?)actingUserId)
-                .SetProperty(o => o.UpdatedAt, utcNow));
+            // Only rows that actually change. RowVersion is a SQL rowversion, so an UPDATE that
+            // writes identical values still bumps it — and this runs for the WHOLE class roster on
+            // every attendance write (the reconcile). Without this guard one scan invalidated the
+            // concurrency token of every obligation on the occurrence, so a teacher grading on
+            // another device lost her entire batch to a 409. See SaveGradesAsync.
+            return await query
+                .Where(o => o.Status != newStatus || o.GradeValue != null || o.IsGradeEntered)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(o => o.Status, newStatus)
+                    .SetProperty(o => o.GradeValue, (decimal?)null)
+                    .SetProperty(o => o.IsGradeEntered, false)
+                    .SetProperty(o => o.LastUpdatedByUserId, (long?)actingUserId)
+                    .SetProperty(o => o.UpdatedAt, utcNow));
         }
 
-        return await query.ExecuteUpdateAsync(setters => setters
-            .SetProperty(o => o.Status, newStatus)
-            .SetProperty(o => o.LastUpdatedByUserId, (long?)actingUserId)
-            .SetProperty(o => o.UpdatedAt, utcNow));
+        return await query
+            .Where(o => o.Status != newStatus)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(o => o.Status, newStatus)
+                .SetProperty(o => o.LastUpdatedByUserId, (long?)actingUserId)
+                .SetProperty(o => o.UpdatedAt, utcNow));
     }
 
     /// <inheritdoc />
@@ -1635,6 +1650,7 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
         await Task.CompletedTask;
     }
 
+    /// <inheritdoc />
     public void SetObligationOriginalRowVersion(
              StudentAssignmentObligation obligation, byte[] rowVersion)
     {

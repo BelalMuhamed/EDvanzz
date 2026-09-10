@@ -36,7 +36,10 @@ public class GradeItemDto
 /// <summary>
 /// Result of a batch grade save. Valid rows are applied; invalid rows are reported per-item with a
 /// stable code (the whole batch still returns 200 — check <see cref="AllSucceeded"/> / per-item
-/// <see cref="BatchGradeItemResultDto.Success"/>). A concurrency conflict fails the whole batch (409).
+/// <see cref="BatchGradeItemResultDto.Success"/>). A row whose concurrency token is stale is ONE
+/// such per-item failure (code <c>ObligationConcurrencyConflict</c>), carrying the current server
+/// status/grade and a fresh token; the rest of the batch still saves. The 409 remains only for a
+/// row that changes between this request's read and its write.
 /// </summary>
 public class BatchGradeResultDto
 {
@@ -58,10 +61,14 @@ public class BatchGradeItemResultDto
     /// <summary>Stable failure code when <see cref="Success"/> is false (e.g. "GradeExceedsMax").</summary>
     public string? Code { get; set; }
 
-    /// <summary>New status name on success (e.g. "AttendedWithGrade").</summary>
+    /// <summary>Status name after the save; on an <c>ObligationConcurrencyConflict</c> row, the
+    /// CURRENT server status instead (what the row became while the client held it).</summary>
     public string? Status { get; set; }
+
+    /// <summary>Grade after the save; on a conflict row, the current server grade.</summary>
     public decimal? Grade { get; set; }
 
-    /// <summary>Fresh base64 concurrency token after save — use it for the next edit of this row.</summary>
+    /// <summary>Fresh base64 concurrency token for this row — after a successful save, or on a
+    /// conflict row so the client can re-apply the teacher's value without a reload.</summary>
     public string? RowVersion { get; set; }
 }

@@ -570,6 +570,8 @@ public interface IExamHomeworkRepo : IGenericRepo<StudentAssignmentObligation, l
     /// the WHERE [RowVersion] = @original clause for optimistic concurrency.
     /// REQ-EXH-027: Manual grade-entry surfaces a 409 if two users edit the same row.
     /// Mirrors <c>SetTemplateOriginalRowVersion</c> pattern.
+    /// Used by the homework/assignment surface (<c>ExamHomeworkService</c>); the exams batch-grade
+    /// path compares tokens itself so one stale row cannot roll back the whole batch.
     /// </summary>
     void SetObligationOriginalRowVersion(StudentAssignmentObligation obligation, byte[] rowVersion);
 
