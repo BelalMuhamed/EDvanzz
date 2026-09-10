@@ -103,6 +103,9 @@ public class AttendanceAutoAbsentService : IAttendanceAutoAbsentService
 
     private int LookbackDays => Math.Max(1, _options.LookbackDays);
 
+    /// <summary>Grace days after a class day closes before an absence may be inferred (see options).</summary>
+    private int GraceDays => Math.Max(0, _options.GraceDays);
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<long>> GetTeacherIdsToSweepAsync()
     {
@@ -133,15 +136,20 @@ public class AttendanceAutoAbsentService : IAttendanceAutoAbsentService
         if (teacher is null)
             return AutoAbsentOutcome.Skipped(teacherId, "TeacherNotFound");
 
-        // Precise per-teacher window in the teacher's local calendar. `localToday` is EXCLUSIVE — only
-        // days that have fully closed for this teacher are swept.
+        // Precise per-teacher window in the teacher's local calendar. `sweepCutoff` is EXCLUSIVE —
+        // only days that have fully closed for this teacher AND cleared the offline-sync grace
+        // window are swept (GraceDays; an offline class marked in the evening must reach the server
+        // before the sweep is allowed to infer anything about it).
         DateTime localToday = _timeZoneService.GetTeacherLocalDate(teacherId).Date;
+        DateTime sweepCutoff = localToday.AddDays(-GraceDays);
         DateTime windowStart = MaxDate(_options.EffectiveFrom.Date, localToday.AddDays(-LookbackDays));
-        if (windowStart >= localToday)
+        if (windowStart >= sweepCutoff)
             return AutoAbsentOutcome.Skipped(teacherId, "EmptyWindow");
 
+        // Bounded by the cutoff, not by today: occurrences inside the grace window would be skipped
+        // by the per-slot gate below anyway, so not loading them is strictly cheaper.
         var candidateOccurrences = await _unitOfWork.AttendanceRepo
-            .GetOccurrencesByTeacherAndDateRangeAsync(teacherId, windowStart, localToday);
+            .GetOccurrencesByTeacherAndDateRangeAsync(teacherId, windowStart, sweepCutoff);
         if (candidateOccurrences.Count == 0)
             return AutoAbsentOutcome.Skipped(teacherId, "NoCandidateOccurrences");
 
@@ -172,7 +180,7 @@ public class AttendanceAutoAbsentService : IAttendanceAutoAbsentService
 
             var (sessionAbsences, sessionHeld, sessionProcessed, sessionSkipped) =
                 await SweepSessionAsync(teacherId, session, groupSessionIds,
-                    sessionGroup.OrderBy(o => o.OccurrenceDate).ToList(), assignmentByStudent, localToday);
+                    sessionGroup.OrderBy(o => o.OccurrenceDate).ToList(), assignmentByStudent, sweepCutoff);
 
             absencesWritten += sessionAbsences;
             heldRolled += sessionHeld;
@@ -202,7 +210,7 @@ public class AttendanceAutoAbsentService : IAttendanceAutoAbsentService
     private async Task<(int absences, int held, int processed, int skipped)> SweepSessionAsync(
         long teacherId, Session session, List<long> groupSessionIds,
         List<SessionOccurrence> occurrences,
-        Dictionary<long, StudentSessionAssignment> assignmentByStudent, DateTime localToday)
+        Dictionary<long, StudentSessionAssignment> assignmentByStudent, DateTime sweepCutoff)
     {
         var newRecords = new List<AttendanceRecord>();
         // Students who became absent in this run (new record OR held→absent), the occurrences that
@@ -223,11 +231,13 @@ public class AttendanceAutoAbsentService : IAttendanceAutoAbsentService
         {
             foreach (var occ in occurrences)
             {
-                // Gate 1 — the WHOLE equivalence slot must have passed (linked sessions may meet later).
+                // Gate 1 — the WHOLE equivalence slot must have passed (linked sessions may meet later)
+                // AND cleared the grace window, so an offline-marked class is never inferred upon
+                // before its queued marks have had a realistic chance to reach the server.
                 DateTime? groupMaxDate = await _unitOfWork.AttendanceRepo
                     .GetMaxOccurrenceDateForSlotAsync(groupSessionIds, occ.WeekStartDate, occ.DayPositionIndex);
                 DateTime effectiveMax = groupMaxDate ?? occ.OccurrenceDate;
-                if (effectiveMax >= localToday)
+                if (effectiveMax >= sweepCutoff)
                 {
                     skipped++;
                     continue;

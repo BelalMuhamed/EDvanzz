@@ -2599,7 +2599,8 @@ public class AttendanceService : IAttendanceService
                         ClientEntryId = entry.ClientEntryId,
                         Success = false,
                         IsConflict = false,
-                        ErrorMessage = "No occurrence found for this session on this date"
+                        ErrorMessage = "No occurrence found for this session on this date",
+                        ErrorCode = "NoOccurrenceOnDate"
                     });
                     continue;
                 }
@@ -2622,9 +2623,26 @@ public class AttendanceService : IAttendanceService
                         });
                         continue;
                     }
-                    else
+
+                    // Not every differing row is a HUMAN conflict. Two server rows are non-final
+                    // states that MarkAttendanceAsync already overwrites/resolves in place on the
+                    // interactive path (see its step 5):
+                    //   • a system-written auto-absent from the nightly sweep — an inference, never
+                    //     a tutor decision, and a real mark must beat it;
+                    //   • an unresolved Held — a deferred state a later Present/Absent resolves.
+                    // This batch path used to short-circuit BEFORE reaching that logic, so a class
+                    // marked offline in the evening came back as a wall of unresolvable conflicts
+                    // the morning after the sweep ran: nothing was recorded, the students stayed
+                    // absent, and the ops parked in the sync centre forever. Fall through to the
+                    // SHARED mark logic for exactly those two rows; a genuine tutor record with a
+                    // different status stays a conflict for a human to resolve.
+                    bool serverRowIsReplaceable =
+                        (existing.IsAutoAbsent && existing.Status == AttendanceStatus.Absent)
+                        || existing.Status == AttendanceStatus.Held;
+
+                    if (!serverRowIsReplaceable)
                     {
-                        // Conflict: server has different status
+                        // Conflict: server has a different status the tutor chose
                         conflictCount++;
                         var student = await _unitOfWork.Students.GetActiveByIdAndTeacherAsync(
                             entry.TeacherStudentId, dto.TeacherId);
@@ -2641,7 +2659,8 @@ public class AttendanceService : IAttendanceService
                     }
                 }
 
-                // No existing record — create via normal mark logic
+                // No existing record (or a replaceable auto-absent / Held one) — the shared mark
+                // logic creates, overwrites or resolves as appropriate.
                 affectedOccurrenceIds.Add(occurrence.Id);
                 var markDto = new MarkAttendanceDto
                 {
@@ -2652,13 +2671,24 @@ public class AttendanceService : IAttendanceService
                     AttendanceMethod = entry.AttendanceMethod,
                     OccurrenceDate = entry.OccurrenceDate,
                     RecordedByUserId = dto.RecordedByUserId,
-                    // AUDIT FIX Step 5 (amended): never AUTO-confirm during
-                    // sync — but honor a confirmation the tutor explicitly
-                    // gave when recording offline (REQ-ATT-057/058: the
-                    // confirmation happened, just without connectivity).
-                    // Entries without one still default to false and come
-                    // back as RequiresAbsenceConfirmation.
-                    AbsenceAlertConfirmed = entry.AbsenceAlertConfirmed
+                    // A REPLAY IS NEVER WITHHELD FOR A PROMPT (2026-09-10).
+                    //
+                    // History: this used to pass `entry.AbsenceAlertConfirmed` through, so a mark
+                    // for a student with a non-zero absence counter came back as
+                    // RequiresAbsenceConfirmation with NOTHING written. That is fine when a human
+                    // is watching — but a background drain has no one to ask, and the app cannot
+                    // know in advance: it pre-confirms from a CACHED list row whose
+                    // `wasAbsentLastSession` predates the nightly sweep, and a tutor who turned the
+                    // absence pop-up off never pre-confirms at all. The result was a silent,
+                    // self-reinforcing loss that hit EXACTLY the students who were absent last time
+                    // — the mark vanished, so they stayed absent, so it happened again next week.
+                    //
+                    // Recording the mark and reporting the alert afterwards costs nothing the
+                    // prompt was protecting: the alert exists to make the tutor follow up, which
+                    // the app now does from the sync centre (AbsenceAlertRaised + AbsenceAlertInfo
+                    // below). REQ-ATT-057/058 keep their teeth on the INTERACTIVE path
+                    // (MarkAttendanceAsync via POST mark), which is untouched.
+                    AbsenceAlertConfirmed = true
                 };
 
                 var markResult = await MarkAttendanceAsync(markDto);
@@ -2666,15 +2696,13 @@ public class AttendanceService : IAttendanceService
                 {
                     var markData = markResult.Data!;
 
-                    // AUDIT FIX Step 5: Detect absence-alert-pending returns.
-                    // When MarkAttendanceAsync returns success with HasAbsenceAlert=true
-                    // and Record=null, it means an absence alert is pending confirmation.
-                    if (markData.HasAbsenceAlert && markData.Record is null)
+                    // Defensive only: with AbsenceAlertConfirmed forced true above, MarkAttendanceAsync
+                    // can no longer return "alert pending, nothing written". If a future change ever
+                    // reintroduces that shape, report it honestly (needs confirmation) rather than
+                    // claiming a success that recorded nothing — never silently drop the mark.
+                    if (markData.HasAbsenceAlert && markData.Record is null && !markData.IsDuplicate)
                     {
-                        // FIX R1: Look up actual student name for the alert.
-                        // Previously used markData.LastAbsenceSessionName (a SESSION name)
-                        // as the StudentName field — clearly wrong.
-                        var alertStudent = await _unitOfWork.Students.GetActiveByIdAndTeacherAsync(
+                        var pendingStudent = await _unitOfWork.Students.GetActiveByIdAndTeacherAsync(
                             entry.TeacherStudentId, dto.TeacherId);
 
                         result.RequiresConfirmationCount++;
@@ -2684,28 +2712,32 @@ public class AttendanceService : IAttendanceService
                             Success = false,
                             IsConflict = false,
                             RequiresAbsenceConfirmation = true,
-                            AbsenceAlertInfo = new AbsenceAlertStudentDto
-                            {
-                                TeacherStudentId = entry.TeacherStudentId,
-                                StudentName = alertStudent?.StudentName ?? "Unknown",
-                                StudentCode = alertStudent?.StudentCode ?? "",
-                                ConsecutiveAbsences = markData.ConsecutiveAbsences,
-                                LastAbsenceDate = markData.LastAbsenceDate,
-                                LastAbsenceSessionName = markData.LastAbsenceSessionName,
-                                WasCrossSession = markData.LastAbsenceWasCrossSession
-                            }
+                            AbsenceAlertInfo = BuildAbsenceAlertInfo(entry.TeacherStudentId, pendingStudent, markData)
                         });
+                        continue;
                     }
-                    else
+
+                    successCount++;
+                    var syncedEntry = new SyncEntryResultDto
                     {
-                        successCount++;
-                        result.EntryResults.Add(new SyncEntryResultDto
-                        {
-                            ClientEntryId = entry.ClientEntryId,
-                            Success = true,
-                            IsConflict = false
-                        });
+                        ClientEntryId = entry.ClientEntryId,
+                        Success = true,
+                        IsConflict = false
+                    };
+
+                    // The mark IS recorded. When the student also carries an absence history, hand the
+                    // detail back so the app can raise the same follow-up the interactive prompt would
+                    // have — after the fact, rather than in place of the record.
+                    if (markData.HasAbsenceAlert && markData.Record is not null)
+                    {
+                        var alertStudent = await _unitOfWork.Students.GetActiveByIdAndTeacherAsync(
+                            entry.TeacherStudentId, dto.TeacherId);
+                        syncedEntry.AbsenceAlertRaised = true;
+                        syncedEntry.AbsenceAlertInfo =
+                            BuildAbsenceAlertInfo(entry.TeacherStudentId, alertStudent, markData);
                     }
+
+                    result.EntryResults.Add(syncedEntry);
                 }
                 else
                 {
@@ -2715,7 +2747,8 @@ public class AttendanceService : IAttendanceService
                         ClientEntryId = entry.ClientEntryId,
                         Success = false,
                         IsConflict = false,
-                        ErrorMessage = markResult.Message ?? "Unknown error during sync"
+                        ErrorMessage = markResult.Message ?? "Unknown error during sync",
+                        ErrorCode = markResult.Code
                     });
                 }
             }
@@ -2747,6 +2780,24 @@ public class AttendanceService : IAttendanceService
             throw;
         }
     }
+
+    /// <summary>
+    /// Absence-alert payload for one synced entry. Shared by the informational path (the mark was
+    /// recorded and the tutor should still follow up) and the defensive pending path, so both
+    /// describe the student identically. FIX R1: the STUDENT's name, never
+    /// <c>LastAbsenceSessionName</c>, which is a session.
+    /// </summary>
+    private static AbsenceAlertStudentDto BuildAbsenceAlertInfo(
+        long teacherStudentId, TeacherStudent? student, MarkAttendanceResultDto markData) => new()
+        {
+            TeacherStudentId = teacherStudentId,
+            StudentName = student?.StudentName ?? "Unknown",
+            StudentCode = student?.StudentCode ?? "",
+            ConsecutiveAbsences = markData.ConsecutiveAbsences,
+            LastAbsenceDate = markData.LastAbsenceDate,
+            LastAbsenceSessionName = markData.LastAbsenceSessionName,
+            WasCrossSession = markData.LastAbsenceWasCrossSession
+        };
 
     // ══════════════════════════════════════════════
     // STUDENT/PARENT VIEW ACCESS

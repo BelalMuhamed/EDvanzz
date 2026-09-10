@@ -43,4 +43,19 @@ public class AutoAbsentOptions
     /// off-peak and after the day has fully closed for the Cairo-anchored tenant base.
     /// </summary>
     public string CronExpression { get; set; } = "30 2 * * *";
+
+    /// <summary>
+    /// Days of grace AFTER a class day has closed before the sweep may infer an absence on it.
+    ///
+    /// WHY: attendance is routinely taken with no connectivity, and the queued marks only reach the
+    /// server when the app is next open and online. At 0 (the pre-2026-09-10 behaviour) an evening
+    /// class was swept ~6 hours later, overnight, while the app was closed — so the sweep wrote
+    /// absences for a class the tutor HAD already marked, and the tutor's real marks then had to
+    /// fight those rows on the way in. 1 moves the sweep to the second night after the class, well
+    /// past any realistic sync delay, while a genuinely unmarked day still becomes Absent
+    /// automatically — just a day later.
+    ///
+    /// Clamped to >= 0 at use. Set 0 to restore the old timing (nothing else changes).
+    /// </summary>
+    public int GraceDays { get; set; } = 1;
 }

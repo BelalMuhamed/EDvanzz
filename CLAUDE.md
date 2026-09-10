@@ -452,6 +452,47 @@ gated, equivalence-safe, auditable background job. Do NOT "fix" it as a regressi
   `ApplyReconciliationAsync`; edit-reason resx keys `AutoAbsent*` / `AbsentFlippedToCrossSessionPresent`.
 - **Scope note**: only CURRENTLY-active assignments are swept (matches the occurrence-status roster); a
   student unassigned since the class day is not retro-marked.
+- **`GraceDays` (added 2026-09-10, default 1).** The sweep may only infer an absence on a class day
+  older than `localToday - GraceDays` (gate `effectiveMax >= sweepCutoff`; the candidate query is
+  bounded by the same cutoff, so it also loads less). Attendance is routinely taken OFFLINE and the
+  queued marks only reach the server when the app is next open AND online — at 0 an evening class was
+  swept ~6 hours later, overnight, with the app closed, so the sweep wrote absences for a class the
+  tutor had already marked. Config-only (`AutoAbsent__GraceDays`); 0 restores the old timing.
+
+### 7.2c Offline attendance + payment sync — the write path must never lose a mark (2026-09-10)
+
+`POST api/Attendance/sync` is the path EVERY offline class takes (a single queued mark uses
+`POST mark`; two or more go through the batch). Two short-circuits in it were silently discarding
+marks in production — a class showed Present on the tutor's phone and Absent to the parents:
+
+- **A differing server row is not automatically a conflict.** `SyncOfflineRecordsAsync` returned
+  `IsConflict` for ANY existing record with another status, never reaching `MarkAttendanceAsync` —
+  which has overwritten a system `IsAutoAbsent` row and resolved a `Held` row since the sweep
+  shipped. Combined with the 6-hour sweep race above, a whole offline class came back as
+  unresolvable conflicts. Now: same status → success; auto-absent-Absent OR Held → fall through to
+  the shared mark logic; anything else → conflict (a real tutor decision). Keep the fall-through —
+  do not re-add a pre-check that bypasses `MarkAttendanceAsync`.
+- **A replay is never withheld for a prompt.** The path now forces `AbsenceAlertConfirmed = true`
+  and reports the alert as INFORMATION on the success entry (`SyncEntryResultDto.AbsenceAlertRaised`
+  + `AbsenceAlertInfo`). Previously a Present mark for a student with `ConsecutiveAbsences > 0`
+  returned `Record = null` and recorded NOTHING; a background drain has no human to answer, the app
+  pre-confirms from a CACHED list row that predates the sweep, and a tutor with the absence pop-up
+  off never pre-confirms at all. The loss hit exactly the students who were absent last time (~8 of
+  100) and was self-reinforcing — the same faces every week. REQ-ATT-057/058 keep their teeth on the
+  INTERACTIVE path (`POST mark`), which is untouched. **Do not "restore" the withholding.**
+- Payments: `PaymentSyncEntryResultDto.ErrorCode` (the `Result.Code` message key, plus
+  `StudentNotAssignedToSession` / `StudentNotFound` for the pre-collect checks) so the app can tell a
+  collector holding cash what to DO. `CollectPaymentDto.CollectionNote` always worked on this
+  endpoint — the app was sending the key `note`, which bound to nothing; that is why partial collects
+  were online-only.
+
+App side (`edvanz-mobile-app`): an op in `conflict` / `needsConfirmation` means NOTHING was recorded,
+so it must never be counted as "saved offline" nor painted on the student list (both the scan-result
+count and the pending overlay used to do exactly that). A dated student-list snapshot carries THAT
+day's statuses — serving it for another day made already-marked students unmarkable and silently
+dropped them from bulk-mark, so a mismatched snapshot day now yields membership with every status
+nulled. Entry points: home banner, side-menu row with a badge, and a post-drain dialog — the screen
+is "Unsent records", never "sync center", and **no user-facing copy anywhere says "roster"**.
 
 ### 7.2b Student User Module — Request/Approval Linking (redesigned 2026-07-12; Connection↔Link split 2026-07-13)
 

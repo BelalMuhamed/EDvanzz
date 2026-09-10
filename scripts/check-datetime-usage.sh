@@ -33,7 +33,7 @@ PROJECTS=(Edvanz.Domain Edvanz.Application Edvanz.Infrastructure Edvanz.API)
 ALLOW=(
   # A coarse UTC window padded a day either side on purpose; the per-teacher worker re-gates on
   # the teacher's local date, so over-selecting only costs a fast no-op.
-  'Edvanz.Application/Services/AttendanceAutoAbsentService.cs:115'
+  'Edvanz.Application/Services/AttendanceAutoAbsentService.cs:118'
   # The subscription module compares EndDate.Date with UtcNow.Date throughout and is internally
   # consistent; its dispatcher runs at 09:00 Africa/Cairo where the two dates always agree.
   # Changing one site alone would make daysRemaining and the reminder disagree by a day.

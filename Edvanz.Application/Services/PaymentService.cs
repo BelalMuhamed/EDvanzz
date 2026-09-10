@@ -3320,6 +3320,11 @@ public class PaymentService : IPaymentService
                     entry.ErrorMessage = syncStudent is null
                         ? "Student not found."
                         : "Student is not assigned to a session.";
+                    // Machine-readable so the app can tell the collector what to do about cash
+                    // they are already holding, instead of parking a sentence they cannot act on.
+                    entry.ErrorCode = syncStudent is null
+                        ? "StudentNotFound"
+                        : "StudentNotAssignedToSession";
                     continue;
                 }
                 offlineRecord.SessionId = syncStudent.SessionId.Value;
@@ -3372,6 +3377,7 @@ public class PaymentService : IPaymentService
             result.FailedCount++;
             entry.IsConflict = collectResult.Data?.IsAlreadyPaid == true;
             entry.ErrorMessage = collectResult.Message;
+            entry.ErrorCode = collectResult.Code;
         }
 
         // PAY-7: payment-domain messages (SyncCompleted/SyncConflictsDetected are attendance-worded —

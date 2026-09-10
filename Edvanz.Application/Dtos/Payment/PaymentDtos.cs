@@ -1030,6 +1030,15 @@ public class PaymentSyncEntryResultDto
     public bool IsConflict { get; set; }
     public string? ErrorMessage { get; set; }
 
+    /// <summary>
+    /// Stable machine-readable reason a record was NOT recorded (the message key behind
+    /// <see cref="ErrorMessage"/>, e.g. <c>PaymentAmountExceedsAdvanceLimit</c>, or
+    /// <c>StudentNotAssignedToSession</c> / <c>StudentNotFound</c> for the pre-collect checks).
+    /// The app needs it to tell the collector what to DO about cash already in their hand —
+    /// the localized sentence alone cannot be branched on. Null on success. Additive.
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
     /// <summary>True when this record was already recorded by an earlier
     /// sync (ClientEntryId dedup) — success without a new transaction.</summary>
     public bool AlreadySynced { get; set; }

@@ -1304,6 +1304,15 @@ public class SyncEntryResultDto
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// Stable machine-readable reason this entry was not recorded — the message key behind
+    /// <see cref="ErrorMessage"/>, or <c>NoOccurrenceOnDate</c> for the one rejection raised
+    /// here rather than by the mark logic. The app shows the teacher WHY each student failed,
+    /// and cannot present an English server sentence to an Arabic tutor; a code lets it pick
+    /// its own wording. Null on success. Additive.
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
+    /// <summary>
     /// Audit Fix: True if this entry needs absence alert confirmation before sync.
     /// REQ-ATT-057/058: Explicit tutor confirmation required.
     /// </summary>
@@ -1313,6 +1322,19 @@ public class SyncEntryResultDto
     /// Audit Fix: Absence alert details for entries requiring confirmation.
     /// </summary>
     public AbsenceAlertStudentDto? AbsenceAlertInfo { get; set; }
+
+    /// <summary>
+    /// The entry WAS recorded (<see cref="Success"/> is true) and the student carries an absence
+    /// history the tutor should follow up on — <see cref="AbsenceAlertInfo"/> carries the detail.
+    /// INFORMATIONAL only: never a reason to hold the record back.
+    ///
+    /// A background replay has no human to answer a prompt, so the sync path records the mark and
+    /// reports the alert afterwards instead of withholding it (which silently lost the mark and
+    /// left the student absent — the same students every week, because a non-zero absence counter
+    /// re-triggered it). The INTERACTIVE path (POST mark) is unchanged: it still asks first
+    /// (REQ-ATT-057/058). Additive — older clients ignore unknown members and simply see a success.
+    /// </summary>
+    public bool AbsenceAlertRaised { get; set; }
 }
 
 /// <summary>
