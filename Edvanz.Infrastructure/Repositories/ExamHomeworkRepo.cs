@@ -469,7 +469,15 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
             .FirstOrDefaultAsync();
 
         var query = _context.StudentAssignmentObligations
-            .Where(o => o.TeacherId == teacherId && o.OccurrenceId == occurrenceId);
+            .Where(o => o.TeacherId == teacherId && o.OccurrenceId == occurrenceId)
+            // BUG-8 precedent: the rows are projected THROUGH TeacherStudent, so a
+            // purged or soft-deleted student's obligation is dropped by that join —
+            // but TotalCount was taken before it and counted them anyway. The list
+            // then claimed 162 students and could only ever render 161, and paging
+            // asked for a page that did not exist. Counting the same population the
+            // rows come from is what makes the header, the pages and the grade
+            // screen's chips agree.
+            .Where(o => o.TeacherStudent != null);
 
         // REQ-EXH-031 — search by name or code.
         if (!string.IsNullOrWhiteSpace(search))
