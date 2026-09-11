@@ -556,12 +556,18 @@ public sealed class VideoService : IVideoService
             if (request.Status.HasValue)
                 video.Status = request.Status.Value;
 
-            // Step 8 — new: explicit duration override wins over the
-            // sourceUrl-change reset above (applied after it).
+            // A supplied duration SEEDS the value; it does not freeze it.
+            //
+            // This used to set IsDurationManuallySet, which reads as "a human decided
+            // this length". No human ever does: the app scrapes it from the YouTube link
+            // and sends it, so the flag marked an automatic value as a deliberate one and
+            // stopped the student's player from ever correcting it. Nothing sets the flag
+            // now, which leaves the tolerance rule doing exactly its job — accept freely
+            // while unknown, refine within ±5% once known — and keeps the anti-cheat
+            // property that a student cannot claim a short video to reach 90%.
             if (request.DurationSeconds.HasValue)
             {
                 video.DurationSeconds = request.DurationSeconds.Value;
-                video.IsDurationManuallySet = true;
             }
 
             // ── Containment: after this update the video must still belong to >=1
@@ -2333,12 +2339,11 @@ public sealed class VideoService : IVideoService
                 PublishDate = request.PublishDate,
             };
 
-            // Explicit duration override — same semantics as the update endpoint: stored value
-            // wins and student reports can no longer overwrite it.
+            // Seeds the length so the FIRST student's percentage is right; see the
+            // update path for why it is no longer flagged as manually set.
             if (request.DurationSeconds.HasValue)
             {
                 video.DurationSeconds = request.DurationSeconds.Value;
-                video.IsDurationManuallySet = true;
             }
 
             await _unitOfWork.VideoAssetsRepo.AddVideoAsync(video);
