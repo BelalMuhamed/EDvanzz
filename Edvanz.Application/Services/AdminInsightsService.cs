@@ -124,6 +124,24 @@ public class AdminInsightsService : IAdminInsightsService
     private const int CallListDefaultTake = 25;
 
     /// <summary>
+    /// "today" / "yesterday" / "N days ago". A literal "0 days ago" reads as broken.
+    /// </summary>
+    private string Ago(int days) => days switch
+    {
+        <= 0 => _localizer["AgoToday"],
+        1 => _localizer["AgoYesterday"],
+        _ => _localizer["AgoDays", days]
+    };
+
+    /// <summary>Pluralises a student count rather than emitting "1 students".</summary>
+    private string Students(int count) =>
+        count == 1 ? _localizer["CountStudentOne"] : _localizer["CountStudentMany", count];
+
+    /// <summary>Pluralises an assistant count.</summary>
+    private string Assistants(int count) =>
+        count == 1 ? _localizer["CountAssistantOne"] : _localizer["CountAssistantMany", count];
+
+    /// <summary>
     /// Turns a row into a call: the evidence in plain words, and the thing to do about it.
     ///
     /// Both strings are localized and carry the REAL numbers. "25 teachers went quiet" is a fact;
@@ -142,7 +160,7 @@ public class AdminInsightsService : IAdminInsightsService
         (string why, string action) = reason switch
         {
             CallReason.PaidNotStarted => (
-                _localizer["CallWhyPaidNotStarted", daysSubscribed, r.StudentCount],
+                _localizer["CallWhyPaidNotStarted", Ago(daysSubscribed), Students(r.StudentCount)],
                 _localizer["CallDoPaidNotStarted"]),
 
             CallReason.ExpiringWhileWorking => (
@@ -150,20 +168,20 @@ public class AdminInsightsService : IAdminInsightsService
                 _localizer["CallDoExpiring"]),
 
             CallReason.OwnerStopped => (
-                _localizer["CallWhyOwnerStopped", r.ActiveAssistantCount,
+                _localizer["CallWhyOwnerStopped", Assistants(r.ActiveAssistantCount),
                     r.LastTeacherActivityAt?.ToString("yyyy-MM-dd") ?? "-"],
                 _localizer["CallDoOwnerStopped"]),
 
             CallReason.WentQuiet => (
-                _localizer["CallWhyWentQuiet", daysSilent, r.StudentCount],
+                _localizer["CallWhyWentQuiet", daysSilent, Students(r.StudentCount)],
                 _localizer["CallDoWentQuiet"]),
 
             CallReason.StudentsStranded => (
-                _localizer["CallWhyStudentsStranded", r.StudentCount],
+                _localizer["CallWhyStudentsStranded", Students(r.StudentCount)],
                 _localizer["CallDoStudentsStranded"]),
 
             CallReason.SetUpNotRunning => (
-                _localizer["CallWhySetUpNotRunning", r.StudentCount, daysSilent],
+                _localizer["CallWhySetUpNotRunning", Students(r.StudentCount), daysSilent],
                 _localizer["CallDoSetUpNotRunning"]),
 
             CallReason.NeverStarted => (

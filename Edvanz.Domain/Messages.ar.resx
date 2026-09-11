@@ -2821,22 +2821,22 @@
     <value>بيستخدم حاجة واحدة</value>
   </data>
   <data name="CallWhyPaidNotStarted" xml:space="preserve">
-    <value>دفع من {0} يوم وعنده {1} طالب متسجلين.</value>
+    <value>دفع {0} وعنده {1} متسجلين.</value>
   </data>
   <data name="CallWhyExpiring" xml:space="preserve">
     <value>اشتغل {0} يوم الشهر ده، والاشتراك {1}.</value>
   </data>
   <data name="CallWhyOwnerStopped" xml:space="preserve">
-    <value>{0} مساعدين لسه بيشتغلوا. المدرس آخر مرة ظهر {1}.</value>
+    <value>{0} لسه بيشتغلوا. المدرس آخر مرة ظهر {1}.</value>
   </data>
   <data name="CallWhyWentQuiet" xml:space="preserve">
-    <value>ساكت من {0} يوم، وعنده {1} طالب.</value>
+    <value>ساكت من {0} يوم، وعنده {1}.</value>
   </data>
   <data name="CallWhyStudentsStranded" xml:space="preserve">
-    <value>{0} طالب، ولا واحد فيهم متحطّ في مجموعة.</value>
+    <value>{0}، ولا واحد فيهم متحطّ في مجموعة.</value>
   </data>
   <data name="CallWhySetUpNotRunning" xml:space="preserve">
-    <value>{0} طالب وأيام حصص جاهزة، بس مفيش أي حاجة من {1} يوم.</value>
+    <value>{0} وأيام حصص جاهزة، بس مفيش أي حاجة من {1} يوم.</value>
   </data>
   <data name="CallWhyNeverStarted" xml:space="preserve">
     <value>مسجّل من {0} يوم وعمره ما ظبط أي حاجة.</value>
@@ -2867,5 +2867,26 @@
   </data>
   <data name="CallDoOneModuleOnly" xml:space="preserve">
     <value>وريه جزء تاني من النظام.</value>
+  </data>
+  <data name="AgoToday" xml:space="preserve">
+    <value>النهاردة</value>
+  </data>
+  <data name="AgoYesterday" xml:space="preserve">
+    <value>إمبارح</value>
+  </data>
+  <data name="AgoDays" xml:space="preserve">
+    <value>من {0} يوم</value>
+  </data>
+  <data name="CountStudentOne" xml:space="preserve">
+    <value>طالب واحد</value>
+  </data>
+  <data name="CountStudentMany" xml:space="preserve">
+    <value>{0} طالب</value>
+  </data>
+  <data name="CountAssistantOne" xml:space="preserve">
+    <value>مساعد واحد</value>
+  </data>
+  <data name="CountAssistantMany" xml:space="preserve">
+    <value>{0} مساعدين</value>
   </data>
 </root>

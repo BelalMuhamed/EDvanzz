@@ -2833,22 +2833,22 @@
     <value>Using one thing</value>
   </data>
   <data name="CallWhyPaidNotStarted" xml:space="preserve">
-    <value>Paid {0} days ago and has {1} students set up.</value>
+    <value>Paid {0} and has {1} set up.</value>
   </data>
   <data name="CallWhyExpiring" xml:space="preserve">
     <value>Worked {0} days this month, and the subscription is {1}.</value>
   </data>
   <data name="CallWhyOwnerStopped" xml:space="preserve">
-    <value>{0} assistants are still working. The teacher was last seen {1}.</value>
+    <value>{0} still working. The teacher was last seen {1}.</value>
   </data>
   <data name="CallWhyWentQuiet" xml:space="preserve">
-    <value>Silent {0} days, with {1} students on the books.</value>
+    <value>Silent {0} days, with {1} on the books.</value>
   </data>
   <data name="CallWhyStudentsStranded" xml:space="preserve">
-    <value>{0} students, and not one is assigned to a session.</value>
+    <value>{0}, and not one is assigned to a session.</value>
   </data>
   <data name="CallWhySetUpNotRunning" xml:space="preserve">
-    <value>{0} students and class days ready, but nothing for {1} days.</value>
+    <value>{0} and class days ready, but nothing for {1} days.</value>
   </data>
   <data name="CallWhyNeverStarted" xml:space="preserve">
     <value>Registered {0} days ago and has never set anything up.</value>
@@ -2879,5 +2879,26 @@
   </data>
   <data name="CallDoOneModuleOnly" xml:space="preserve">
     <value>Show them one more part of the product.</value>
+  </data>
+  <data name="AgoToday" xml:space="preserve">
+    <value>today</value>
+  </data>
+  <data name="AgoYesterday" xml:space="preserve">
+    <value>yesterday</value>
+  </data>
+  <data name="AgoDays" xml:space="preserve">
+    <value>{0} days ago</value>
+  </data>
+  <data name="CountStudentOne" xml:space="preserve">
+    <value>1 student</value>
+  </data>
+  <data name="CountStudentMany" xml:space="preserve">
+    <value>{0} students</value>
+  </data>
+  <data name="CountAssistantOne" xml:space="preserve">
+    <value>1 assistant</value>
+  </data>
+  <data name="CountAssistantMany" xml:space="preserve">
+    <value>{0} assistants</value>
   </data>
 </root>
