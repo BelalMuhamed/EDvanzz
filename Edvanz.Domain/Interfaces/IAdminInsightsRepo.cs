@@ -153,6 +153,18 @@ public sealed class AdminUsageFilter
     /// </summary>
     public int? SubscribedWithinDays { get; set; }
 
+    /// <summary>True = did something in the last 30 days; false = did nothing at all.</summary>
+    public bool? IsActive { get; set; }
+
+    /// <summary>Only subscribers (Active or ExpiringSoon) — the paying base.</summary>
+    public bool? SubscribedOnly { get; set; }
+
+    /// <summary>
+    /// Entitled to this feature and never once opened it. The adoption gap, as a filter — this is
+    /// what every number on the Numbers page links to.
+    /// </summary>
+    public int? NeverUsedFeatureMask { get; set; }
+
     /// <summary>Column to order by, as a stable token the repo maps to an expression.</summary>
     public string SortBy { get; set; } = "LastActivity";
     public bool Descending { get; set; } = true;

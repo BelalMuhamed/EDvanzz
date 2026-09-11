@@ -159,6 +159,15 @@ public class TeacherUsageQueryRequest
     /// </summary>
     public int? SubscribedWithinDays { get; set; }
 
+    /// <summary>True = active in the last 30 days; false = nothing at all.</summary>
+    public bool? IsActive { get; set; }
+
+    /// <summary>Only teachers with a live subscription.</summary>
+    public bool? SubscribedOnly { get; set; }
+
+    /// <summary>Entitled to this feature and never opened it — the adoption gap as a filter.</summary>
+    public UsageModules? NeverUsedFeature { get; set; }
+
     public TeacherUsageSortBy SortBy { get; set; } = TeacherUsageSortBy.LastActivity;
     public SortDirection SortDirection { get; set; } = SortDirection.Desc;
 }

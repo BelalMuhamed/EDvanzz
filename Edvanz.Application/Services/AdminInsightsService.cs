@@ -524,6 +524,11 @@ public class AdminInsightsService : IAdminInsightsService
             // the existing teacher-list filter, so "20 Aug → 25 Aug" catches all of the 25th.
             RegisteredToExclusive = request.RegisteredTo?.Date.AddDays(1),
             SubscribedWithinDays = request.SubscribedWithinDays,
+            IsActive = request.IsActive,
+            SubscribedOnly = request.SubscribedOnly,
+            NeverUsedFeatureMask = request.NeverUsedFeature is null or UsageModules.None
+                ? null
+                : (int)request.NeverUsedFeature.Value,
             SortBy = request.SortBy.ToString(),
             Descending = request.SortDirection == SortDirection.Desc
         };

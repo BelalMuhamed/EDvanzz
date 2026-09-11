@@ -127,6 +127,25 @@ public class AdminInsightsRepo : IAdminInsightsRepo
         if (filter.SubscriptionStatus is not null)
             query = query.Where(r => r.SubscriptionStatus == filter.SubscriptionStatus);
 
+        if (filter.IsActive is not null)
+            query = filter.IsActive.Value
+                ? query.Where(r => r.ActiveDays30 > 0)
+                : query.Where(r => r.ActiveDays30 == 0);
+
+        if (filter.SubscribedOnly == true)
+            query = query.Where(r =>
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.Active ||
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.ExpiringSoon);
+
+        if (filter.NeverUsedFeatureMask is not null)
+        {
+            int bit = filter.NeverUsedFeatureMask.Value;
+            // Entitled to it AND never opened it. Both halves matter: without the entitlement
+            // check this would list everyone who lacks the feature as ignoring it.
+            query = query.Where(r => (r.EntitledModulesMask & bit) != 0
+                                  && (r.ModulesUsedAllTimeMask & bit) == 0);
+        }
+
         if (filter.UsingModuleMask is not null)
         {
             int bit = filter.UsingModuleMask.Value;
