@@ -1502,16 +1502,22 @@ public sealed class VideoService : IVideoService
         // Applied BEFORE the clamps below, which bound the delta and the resume position by
         // the video's length: learning it now makes this very report the first one they can
         // actually bound.
-        // This runs on EVERY pause, and the client reports the length on every one of
-        // them once it knows it — so the already-agreed case must cost nothing. Only a
-        // report that DIFFERS from what is stored is worth a write, and the reload the
-        // start path does is unnecessary here: ExecuteUpdate sets exactly the reported
-        // value, so when it reports a row changed, that value is the stored one. Kept in
-        // a local rather than written onto the tracked entity, which SaveChangesAsync
-        // below would otherwise re-issue as a second UPDATE.
+        // FIRST-LEARN ONLY, and deliberately narrower than the start path.
+        //
+        // This runs on EVERY pause and the client reports the length on every one of them
+        // once it knows it, so refining an already-known value here would write forever:
+        // two players can disagree by a second (watched happen on prod through the start
+        // path, 5741 -> 5740), each report within tolerance, each accepted. The job here
+        // is to learn a length nobody has established yet — refinement stays on
+        // start-watch, which fires once per play. A settled video costs zero round trips.
+        //
+        // No reload either: ExecuteUpdate sets exactly the reported value, so a row it
+        // reports changed holds that value. Kept in a local rather than written onto the
+        // tracked entity, which SaveChangesAsync below would re-issue as a second UPDATE.
+        // A deliberate manual 0 is still respected — the repo's own guard checks
+        // IsDurationManuallySet on this branch.
         int effectiveDurationSeconds = video.DurationSeconds;
-        if (request.VideoDurationSeconds > 0
-            && request.VideoDurationSeconds != effectiveDurationSeconds)
+        if (request.VideoDurationSeconds > 0 && effectiveDurationSeconds == 0)
         {
             bool durationAccepted = await _unitOfWork.VideoAssetsRepo
                 .TryUpdateDurationWithinToleranceAsync(
