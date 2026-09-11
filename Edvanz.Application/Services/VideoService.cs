@@ -1492,6 +1492,27 @@ public sealed class VideoService : IVideoService
             return Result<StopWatchResponse>.Failure(
                 _localizer, VideoConstants.Messages.NoActiveSession, HttpStatusCode.Conflict);
 
+        // Same trust-boundary duration update as start-watch. That call fires on the play
+        // transition, before the player's metadata is necessarily loaded, so a first play
+        // reporting 0 used to leave the video's length unknown until someone opened it again
+        // with better timing — and until then every percentage was dead (no completion
+        // percent, "completed" stuck at 0 for students who had watched it all). Progress
+        // reports keep arriving, so a length that resolves a moment after playback lands here.
+        //
+        // Applied BEFORE the clamps below, which bound the delta and the resume position by
+        // the video's length: learning it now makes this very report the first one they can
+        // actually bound.
+        if (request.VideoDurationSeconds > 0)
+        {
+            await _unitOfWork.VideoAssetsRepo.TryUpdateDurationWithinToleranceAsync(
+                videoAssetId,
+                request.VideoDurationSeconds,
+                VideoConstants.DurationToleranceFraction);
+
+            video = await _unitOfWork.VideoAssetsRepo
+                .GetVideoByIdAndTeacherAsync(videoAssetId, teacherId) ?? video;
+        }
+
         var utcNow = DateTime.UtcNow;
 
         var (acceptedDelta, deltaWasClamped) = ClampDelta(

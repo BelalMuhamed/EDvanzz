@@ -997,6 +997,21 @@ public sealed class StopWatchRequest
     public int DeltaSeconds { get; set; }
 
     /// <summary>
+    /// The video's total length in seconds, same trust boundary and tolerance rule as
+    /// <see cref="StartWatchRequest.VideoDurationSeconds"/>. Zero / omitted = "the player
+    /// still doesn't know", which changes nothing.
+    ///
+    /// Start-watch used to be the ONLY place a duration could be learned, and it fires on
+    /// the play transition — before the player's metadata is necessarily populated. A first
+    /// play reporting 0 therefore left the video at 0 until someone opened it again and
+    /// happened to have metadata ready, and everything percentage-shaped stayed dead in the
+    /// meantime: no completion percent, "completed" stuck at 0 for students who had watched
+    /// the whole thing. Progress reports arrive every few seconds, so accepting it here is
+    /// what makes a duration that loads a moment after playback still land.
+    /// </summary>
+    public int VideoDurationSeconds { get; set; }
+
+    /// <summary>
     /// Optional idempotency key (Q4(b)). See <see cref="StartWatchRequest.ClientEventId"/>.
     /// </summary>
     public Guid? ClientEventId { get; set; }

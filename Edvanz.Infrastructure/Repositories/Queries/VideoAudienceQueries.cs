@@ -52,12 +52,24 @@ internal static class VideoAudienceQueries
     public static IQueryable<VideoAudiencePair> ResolvedStudentPairsForVideos(
         EdvanzDbContext context, long teacherId, IReadOnlyCollection<long> videoAssetIds)
     {
+        // Joined to TeacherStudents like the other two branches, so a scope row whose
+        // student has since been soft-deleted or purged cannot enter the audience.
+        // Without it this branch counted a student the report rows then dropped (they
+        // project THROUGH the same navigation), leaving a header that could exceed every
+        // row beneath it — the reason the by-session breakdown sums its own rows rather
+        // than trusting a separately-counted total. Also enforces the tenant here, which
+        // this branch never did.
         var individualScope = context.VideoScopes
             .Where(s => videoAssetIds.Contains(s.VideoAssetId) && s.TeacherStudentId.HasValue)
-            .Select(s => new VideoAudiencePair
+            .Join(context.TeacherStudents,
+                  s => s.TeacherStudentId!.Value,
+                  ts => ts.Id,
+                  (s, ts) => new { s.VideoAssetId, ts.Id, ts.TeacherId })
+            .Where(x => x.TeacherId == teacherId)
+            .Select(x => new VideoAudiencePair
             {
-                VideoAssetId = s.VideoAssetId,
-                TeacherStudentId = s.TeacherStudentId!.Value,
+                VideoAssetId = x.VideoAssetId,
+                TeacherStudentId = x.Id,
             });
 
         var sessionScope = context.VideoScopes
