@@ -130,6 +130,25 @@ public class Teacher : BaseEntity
     /// </summary>
     public GenerationMode? StudentCodeModeOverride { get; set; }
 
+    // ── Sales attribution (admin-only, added 2026-09-11) ────────────
+    // Who brought this account in. Before this, attribution lived solely in a disconnected Google
+    // Sheet (sales-crm/) with no shared identifier, so no screen could tell which rep's accounts
+    // actually went live. Both columns are admin-managed and never exposed to the teacher.
+
+    /// <summary>
+    /// The <see cref="SalesRep"/> credited with this account, or null if unattributed (every teacher
+    /// registered before this shipped). FK configured in Fluent API (CLAUDE.md §4.1).
+    /// </summary>
+    public long? SalesRepId { get; set; }
+    public SalesRep? SalesRep { get; set; }
+
+    /// <summary>
+    /// How the account was acquired — field visit, referral, inbound, and so on. Free text on purpose:
+    /// the categories are still settling, and an enum here would need a migration every time sales
+    /// coined a new one. Promote it to a lookup once the values stop changing.
+    /// </summary>
+    public string? AcquisitionSource { get; set; }
+
     // Navigation properties
     public TeacherConfiguration? Configuration { get; set; }
     public ICollection<TeacherSubject> TeacherSubjects { get; set; } = new List<TeacherSubject>();

@@ -178,6 +178,19 @@ namespace Edvanz.Domain.Interfaces
         /// Reference table of per-module free-tier creation quotas (see ModuleQuotaKeys).
         /// </summary>
         IModuleQuotaRepo ModuleQuotaRepo { get; }
+
+        /// <summary>
+        /// Admin Insights — every query behind the nightly usage rollup (cadence, module depth,
+        /// operator mix, setup health) and the storage for its two derived tables.
+        /// </summary>
+        ITeacherUsageRepo TeacherUsageRepo { get; }
+
+        /// <summary>
+        /// Admin Insights — the read side: usage grid, overview aggregates, insight-card teacher
+        /// lists, and sales-rep performance. Reads the pre-computed snapshot, never the raw tables.
+        /// </summary>
+        IAdminInsightsRepo AdminInsightsRepo { get; }
+
         /// <summary>Online Exam Module — teacher-side aggregate (exam, questions, options, scopes).</summary>
         IOnlineExamRepo OnlineExamsRepo { get; }
 

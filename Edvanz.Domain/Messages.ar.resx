@@ -2736,4 +2736,61 @@
   <data name="DeviceBlockedNotifBody" xml:space="preserve">
     <value>{0} حاول يفتح حسابك من موبايل تاني واتمنع. افتح طلابي وأعِد تعيين جهازه لو ده فعلاً موبايله.</value>
   </data>
+  <data name="SalesRepNotFound" xml:space="preserve">
+    <value>المندوب مش موجود.</value>
+  </data>
+  <data name="SalesRepNameRequired" xml:space="preserve">
+    <value>لازم تكتب اسم المندوب.</value>
+  </data>
+  <data name="SalesRepNameDuplicate" xml:space="preserve">
+    <value>فيه مندوب بنفس الاسم موجود بالفعل.</value>
+  </data>
+  <data name="SalesRepCreated" xml:space="preserve">
+    <value>تم إضافة المندوب.</value>
+  </data>
+  <data name="SalesRepUpdated" xml:space="preserve">
+    <value>تم تعديل بيانات المندوب.</value>
+  </data>
+  <data name="SalesRepAssigned" xml:space="preserve">
+    <value>تم تحديث المندوب المسؤول.</value>
+  </data>
+  <data name="AdminNoteCreated" xml:space="preserve">
+    <value>تم حفظ الملاحظة.</value>
+  </data>
+  <data name="AdminNoteDeleted" xml:space="preserve">
+    <value>تم مسح الملاحظة.</value>
+  </data>
+  <data name="AdminNoteNotFound" xml:space="preserve">
+    <value>الملاحظة مش موجودة.</value>
+  </data>
+  <data name="AdminNoteBodyRequired" xml:space="preserve">
+    <value>الملاحظة مينفعش تكون فاضية.</value>
+  </data>
+  <data name="TeacherUsageRecomputed" xml:space="preserve">
+    <value>تم إعادة حساب الاستخدام للمدرس ده.</value>
+  </data>
+  <data name="InsightWentQuiet" xml:space="preserve">
+    <value>كان بيشتغل بانتظام وبعدين سكت. اللي وقفوا من قريب هما أسهل ناس ترجعهم.</value>
+  </data>
+  <data name="InsightAssistantOnly" xml:space="preserve">
+    <value>المساعدين لسه بيشتغلوا، لكن المدرس نفسه بطل يدخل. الحساب شكله شغال بس صاحبه بيبعد.</value>
+  </data>
+  <data name="InsightNeverStarted" xml:space="preserve">
+    <value>مسجّل من فترة ولسه مفيش حاجة متظبطة تشتغل.</value>
+  </data>
+  <data name="InsightSetUpNotRunning" xml:space="preserve">
+    <value>متظبط صح — طلبة ومجموعات وأيام حصص — بس محدش فتحه من شهر.</value>
+  </data>
+  <data name="InsightSingleModule" xml:space="preserve">
+    <value>بيستخدم جزء واحد بس من النظام. الباقي مدفوع ومش متفتح.</value>
+  </data>
+  <data name="InsightSessionLessRoster" xml:space="preserve">
+    <value>عنده طلبة بس ولا واحد متحطّ في مجموعة، يبقى كلهم بيفتحوا تطبيق فاضي.</value>
+  </data>
+  <data name="InsightNewlyLive" xml:space="preserve">
+    <value>عمل حاجة حقيقية لأول مرة الأسبوع ده.</value>
+  </data>
+  <data name="InsightExpiringWhileActive" xml:space="preserve">
+    <value>بيستخدم النظام فعلاً والاشتراك خلص أو قرب يخلص.</value>
+  </data>
 </root>

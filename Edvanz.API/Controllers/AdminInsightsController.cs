@@ -1,0 +1,293 @@
+using Edvanz.API.Attributes;
+using Edvanz.Application.Dtos;
+using Edvanz.Application.Dtos.AdminInsights;
+using Edvanz.Application.IservicesContract;
+using Edvanz.Application.ServiceContract;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Edvanz.API.Controllers;
+
+/// <summary>
+/// SuperAdmin usage intelligence: who is actually using Edvanz, how often, how deeply, and who on the
+/// account is doing the work — plus the sales attribution and internal notes that turn those numbers
+/// into a conversation someone can have.
+///
+/// WHY THIS EXISTS: before it, the admin portal could only report logins and row counts. Neither
+/// answers the business question. A teacher who opens the app once and marks nothing looked identical
+/// to one running their whole business on it, and ten students meant nothing if none of them were
+/// assigned to a session. Everything here is measured from real writes.
+///
+/// THE MODEL IS THREE INDEPENDENT AXES, and the UI always shows all three:
+///   1. CADENCE  — how often (daily · most days · weekly · rarely · dormant · never)
+///   2. DEPTH    — which modules (attendance only vs attendance + payments + exams)
+///   3. OPERATOR — who works it (teacher only · assistants only · both)
+///
+/// DATA FRESHNESS: reads come from TeacherUsageSnapshots, rebuilt nightly at 03:15 Africa/Cairo by
+/// the `teacher-usage-rollup` Hangfire job. Every response carries a computedAt so a stale number can
+/// be told apart from a quiet one, and `POST teachers/{id}/recompute` refreshes one teacher on demand.
+///
+/// AUTHORIZATION: class-level [Authorize]; every action
+/// [ModulePermission(roles: ["SuperAdmin"], roleOnly: true)] — mirrors AdminSubscriptionController.
+/// </summary>
+[Route("api/admin/insights")]
+[Authorize]
+public class AdminInsightsController : ApiBaseController
+{
+    private readonly IAdminInsightsService _insights;
+    private readonly ICurrentUserService _currentUser;
+
+    public AdminInsightsController(
+        IAdminInsightsService insights,
+        ICurrentUserService currentUser)
+    {
+        _insights = insights;
+        _currentUser = currentUser;
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 1: OVERVIEW
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   The admin landing page in one call — headline counts with a real previous-period delta, the
+    //   three axis distributions, module adoption, and the named insight cards.
+    //
+    //   Every insight card NAMES TEACHERS. A count cannot be worked; a list of five people with
+    //   phone numbers and a sales rep can.
+    //
+    // TABLES READ: TeacherUsageSnapshots, TeacherUsageDays, Teachers, SalesReps, TeacherSubscriptions
+    //
+    // SAMPLE: GET /api/admin/insights/overview
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("overview")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<AdminOverviewDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetOverview()
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetOverviewAsync());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 2: USAGE GRID
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   One page of teachers with all three axes, the setup-health pairs and a 30-day sparkline.
+    //   Every filter is optional and they compose, so "assistants only, using attendance, sold by
+    //   Ahmed, registered in August" is one request.
+    //
+    //   Filtering, sorting, counting and paging all happen in SQL against the pre-computed snapshot.
+    //   Search folds Arabic variants (مصطفي ≡ مصطفى).
+    //
+    // TABLES READ: TeacherUsageSnapshots, TeacherUsageDays, Teachers, Users, SalesReps,
+    //              TeacherSubscriptions, AdminNotes
+    //
+    // SAMPLE: GET /api/admin/insights/teachers?operators=AssistantsOnly&usingModule=Attendance&page=1
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("teachers")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<PaginatedResponse<List<TeacherUsageListItemDto>>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetUsageGrid([FromQuery] TeacherUsageQueryRequest request)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetUsageGridAsync(request));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 3: ONE TEACHER'S USAGE (Teacher 360 — Usage tab)
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   The full picture for one teacher: the grid row, 90 days of daily activity (zero-filled so
+    //   quiet stretches read as flat rather than absent), writes per module over 30 days, and the
+    //   PEOPLE on the account — teacher and every assistant, removed ones included — each with their
+    //   own last-seen. That last list is the operator axis made concrete: a name to call.
+    //
+    // SAMPLE: GET /api/admin/insights/teachers/42
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("teachers/{teacherId:long}")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<TeacherUsageDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetTeacherUsage([FromRoute] long teacherId)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetTeacherUsageAsync(teacherId));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 4: THE FULL LIST BEHIND AN INSIGHT CARD
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   What "see all 34" opens. `insightKey` is one of the AdminInsightKind names the overview
+    //   returns — WentQuiet, AssistantOnly, NeverStarted, SetUpNotRunning, SingleModule,
+    //   SessionLessRoster, NewlyLive, ExpiringWhileActive. Each keeps its own relevance ordering.
+    //
+    // SAMPLE: GET /api/admin/insights/cards/WentQuiet?page=1&pageSize=20
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("cards/{insightKey}")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<PaginatedResponse<List<TeacherUsageListItemDto>>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetInsightTeachers(
+        [FromRoute] string insightKey,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetInsightTeachersAsync(insightKey, page, pageSize));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 5: RECOMPUTE ONE TEACHER NOW
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   Rebuilds one teacher's usage immediately instead of waiting for tonight's run — after a
+    //   support action, or when an admin distrusts a number in front of them. Idempotent: the
+    //   window is deleted and rewritten, so running it twice gives the same answer.
+    //
+    //   `days` defaults to the full backfill window. Runs INLINE (not queued) because the caller is
+    //   a human waiting for the refreshed screen.
+    //
+    // TABLES WRITTEN: TeacherUsageDays, TeacherUsageSnapshots
+    //
+    // SAMPLE: POST /api/admin/insights/teachers/42/recompute?days=30
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpPost("teachers/{teacherId:long}/recompute")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<TeacherUsageDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> RecomputeTeacherUsage(
+        [FromRoute] long teacherId,
+        [FromQuery] int days = 0)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.RecomputeTeacherUsageAsync(teacherId, days));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINTS 6-9: SALES ATTRIBUTION
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHY: nothing recorded who sold an account — attribution lived only in a Google Sheet with no
+    // shared identifier, so no screen could answer "which of this rep's accounts actually went
+    // live?". The rollup columns on each rep are that answer.
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Every sales rep with their book of accounts rolled up by outcome.</summary>
+    [HttpGet("sales-reps")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<List<SalesRepDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetSalesReps([FromQuery] bool includeInactive = false)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetSalesRepsAsync(includeInactive));
+    }
+
+    /// <summary>Adds a sales rep. Names must be unique — duplicates make attribution unreadable.</summary>
+    [HttpPost("sales-reps")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<SalesRepDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CreateSalesRep([FromBody] SaveSalesRepRequest request)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.CreateSalesRepAsync(request));
+    }
+
+    /// <summary>
+    /// Updates a sales rep. Setting <c>isActive: false</c> hides them from the assign picker but
+    /// KEEPS their name on every teacher they brought in — historical attribution never disappears.
+    /// </summary>
+    [HttpPut("sales-reps/{salesRepId:long}")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<SalesRepDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> UpdateSalesRep(
+        [FromRoute] long salesRepId,
+        [FromBody] SaveSalesRepRequest request)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.UpdateSalesRepAsync(salesRepId, request));
+    }
+
+    /// <summary>
+    /// Assigns (or, with a null <c>salesRepId</c>, clears) a teacher's sales attribution and
+    /// acquisition source. Returns the refreshed grid row.
+    /// </summary>
+    [HttpPut("teachers/{teacherId:long}/sales")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<TeacherUsageListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> AssignSalesRep(
+        [FromRoute] long teacherId,
+        [FromBody] AssignSalesRepRequest request)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.AssignSalesRepAsync(teacherId, request));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINTS 10-12: INTERNAL NOTES
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // INTERNAL ONLY — never surfaced on any teacher-, assistant-, student- or parent-facing
+    // endpoint. These are written ABOUT the teacher, not for them.
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>A teacher's notes, pinned first then newest.</summary>
+    [HttpGet("teachers/{teacherId:long}/notes")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<List<AdminNoteDto>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetNotes([FromRoute] long teacherId)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetNotesAsync(teacherId));
+    }
+
+    /// <summary>
+    /// Adds a note, stamped with the acting admin's id and name. The author name is captured at
+    /// write time so the note stays readable even if that admin account is later renamed or removed.
+    /// </summary>
+    [HttpPost("teachers/{teacherId:long}/notes")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<AdminNoteDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateNote(
+        [FromRoute] long teacherId,
+        [FromBody] CreateAdminNoteRequest request)
+    {
+        // The author is taken from the TOKEN, never from the body (CLAUDE.md §3.3 / BUG-12).
+        long? authorUserId = _currentUser.UserId;
+        if (authorUserId is null) return UserNotResolved();
+
+        return ToResponse(await _insights.CreateNoteAsync(teacherId, request, authorUserId.Value));
+    }
+
+    /// <summary>Soft-deletes a note. The row survives for audit.</summary>
+    [HttpDelete("teachers/{teacherId:long}/notes/{noteId:long}")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<bool>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteNote(
+        [FromRoute] long teacherId,
+        [FromRoute] long noteId)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.DeleteNoteAsync(teacherId, noteId));
+    }
+}

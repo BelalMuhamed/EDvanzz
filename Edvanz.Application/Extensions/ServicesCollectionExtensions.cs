@@ -167,6 +167,10 @@ public static class ServicesCollectionExtensions
         // Nightly auto-absent sweep — writes Absent for unmarked/held rosters once the equivalence
         // slot has passed (business logic; the Infrastructure job is a thin dispatcher over this).
         services.AddScoped<IAttendanceAutoAbsentService, AttendanceAutoAbsentService>();
+        // Admin Insights — nightly usage rollup (cadence / depth / operator mix / setup health).
+        services.AddScoped<ITeacherUsageRollupService, TeacherUsageRollupService>();
+        // Admin Insights — the read side (overview, usage grid, Teacher 360, sales, notes).
+        services.AddScoped<IAdminInsightsService, AdminInsightsService>();
 
         services.Configure<RequestLocalizationOptions>(options =>
         {

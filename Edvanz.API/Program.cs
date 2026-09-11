@@ -249,12 +249,16 @@ builder.Services.AddHangfire(config =>
 
 builder.Services.AddHangfireServer(options =>
 {
+    // ORDER IS PRIORITY: Hangfire drains these left to right. The admin usage rollup sits LAST on
+    // purpose — it is reporting work with no user waiting on it, and a half-year backfill must never
+    // delay a subscription reminder, a payment-rejection message or the attendance sweep.
     options.Queues = new[]
     {
         "default",
         SubscriptionConstants.NotificationsQueue,
         "assignment-materialization",
-        AttendanceConstants.AutoAbsentQueue
+        AttendanceConstants.AutoAbsentQueue,
+        AdminInsightsConstants.UsageRollupQueue
     };
     options.WorkerCount = 4;
     options.ServerName = $"edvanz-{Environment.MachineName}";
@@ -317,6 +321,9 @@ builder.Services.Configure<Edvanz.Application.Options.FreeTierQuotaOptions>(
 // tunable via App Service settings "AutoAbsent__Enabled" / "AutoAbsent__EffectiveFrom" etc.
 builder.Services.Configure<Edvanz.Application.Options.AutoAbsentOptions>(
     builder.Configuration.GetSection(Edvanz.Application.Options.AutoAbsentOptions.Section));
+// Admin usage rollup — kill switch + window sizes, tunable from App Service settings.
+builder.Services.Configure<Edvanz.Application.Options.AdminInsightsOptions>(
+    builder.Configuration.GetSection(Edvanz.Application.Options.AdminInsightsOptions.Section));
 
 builder.Services.Configure<Edvanz.Application.Options.SupportOptions>(
     builder.Configuration.GetSection(Edvanz.Application.Options.SupportOptions.Section));
@@ -810,6 +817,24 @@ for (int attempt = 1; ; attempt++)
             recurringJobId: AttendanceConstants.AutoAbsentJobId,
             methodCall: job => job.RunAsync(),
             cronExpression: autoAbsentOpts.CronExpression,
+            options: new RecurringJobOptions
+            {
+                TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo"),
+            }
+          );
+
+        // ── Nightly admin usage rollup ──
+        // Rebuilds the per-teacher usage model the admin dashboard reads (cadence, module depth,
+        // operator mix, setup health). Runs at 03:15 Africa/Cairo — after the 02:30 auto-absent sweep
+        // so the two never contend. The dispatcher fans out one worker per teacher; each recomputes a
+        // short trailing window (or a full backfill on a teacher's first ever run) and is idempotent,
+        // so a re-run is always safe.
+        var usageRollupOpts = app.Services
+            .GetRequiredService<IOptions<Edvanz.Application.Options.AdminInsightsOptions>>().Value;
+        RecurringJob.AddOrUpdate<UsageRollupDispatcherJob>(
+            recurringJobId: AdminInsightsConstants.UsageRollupJobId,
+            methodCall: job => job.RunAsync(),
+            cronExpression: usageRollupOpts.CronExpression,
             options: new RecurringJobOptions
             {
                 TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Africa/Cairo"),

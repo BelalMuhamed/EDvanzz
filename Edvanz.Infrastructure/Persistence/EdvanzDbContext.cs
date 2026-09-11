@@ -250,6 +250,25 @@ public class EdvanzDbContext(DbContextOptions<EdvanzDbContext> options) : DbCont
     /// <c>GET /api/files/{fileId}</c> endpoint. See <see cref="FileObject"/>.
     /// </summary>
     public DbSet<FileObject> FileObjects => Set<FileObject>();
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // ADMIN INSIGHTS (SuperAdmin-only: usage intelligence, sales attribution, notes)
+    // ════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Sales team members, so each teacher can be attributed to whoever sold it.</summary>
+    public DbSet<SalesRep> SalesReps => Set<SalesRep>();
+
+    /// <summary>Internal admin notes about a teacher. Never exposed to the teacher.</summary>
+    public DbSet<AdminNote> AdminNotes => Set<AdminNote>();
+
+    /// <summary>Per-teacher-per-day activity facts, written only by the nightly usage rollup.</summary>
+    public DbSet<TeacherUsageDay> TeacherUsageDays => Set<TeacherUsageDay>();
+
+    /// <summary>Current per-teacher usage read model (cadence / depth / operators / setup health).</summary>
+    public DbSet<TeacherUsageSnapshot> TeacherUsageSnapshots => Set<TeacherUsageSnapshot>();
+
+    /// <summary>Audit trail of SuperAdmin read-only "view as teacher" requests.</summary>
+    public DbSet<AdminAccessLog> AdminAccessLogs => Set<AdminAccessLog>();
     // ════════════════════════════════════════════════════════════════════════════
     // DIRECT CHAT (1:1 two-way messaging — supersedes AAM-FR-07 one-way)
     // ════════════════════════════════════════════════════════════════════════════
@@ -4121,6 +4140,151 @@ modelBuilder.Entity<AssignmentTemplate>(entity =>
             entity.Property(c => c.LatestVersion).IsRequired().HasMaxLength(32);
             entity.Property(c => c.StoreUrl).IsRequired().HasMaxLength(512);
             entity.HasIndex(c => c.Platform).IsUnique().HasDatabaseName("UX_AppVersionConfigs_Platform");
+        });
+        #endregion
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ADMIN INSIGHTS MODULE
+        // ════════════════════════════════════════════════════════════════════════
+        //
+        // Every FK below is configured in Fluent API ONLY, explicitly NoAction (CLAUDE.md §4.1/§4.2).
+        // None are left to EF Core's convention default, which is what produces SQL Server's
+        // multiple-cascade-path migration failures.
+        //
+        // All five tables hang off Teacher, which already has many NoAction children. The usage tables
+        // are DERIVED data — if a teacher is ever hard-purged, their rows here are rebuildable from one
+        // job run, so they must never be allowed to block that purge.
+
+        #region SalesRep (sales attribution roster)
+        modelBuilder.Entity<SalesRep>(entity =>
+        {
+            entity.ToTable("SalesReps");
+            entity.HasKey(r => r.Id);
+            entity.Property(r => r.Name).IsRequired().HasMaxLength(128);
+            entity.Property(r => r.PhoneNumber).HasMaxLength(32);
+            entity.Property(r => r.IsActive).HasDefaultValue(true);
+
+            // Reps are few and always listed alphabetically; the index serves the active-only picker.
+            entity.HasIndex(r => new { r.IsActive, r.Name })
+                  .HasDatabaseName("IX_SalesReps_IsActive_Name");
+        });
+        #endregion
+
+        #region Teacher → SalesRep (attribution edge)
+        // Configured here rather than in the Teacher region so the whole admin-insights surface reads
+        // in one place. NoAction: deactivating or removing a rep must never touch teacher rows.
+        modelBuilder.Entity<Teacher>(entity =>
+        {
+            entity.Property(t => t.AcquisitionSource).HasMaxLength(128);
+
+            entity.HasOne(t => t.SalesRep)
+                  .WithMany(r => r.Teachers)
+                  .HasForeignKey(t => t.SalesRepId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // Powers the per-rep rollup and the "filter teachers by rep" grid.
+            entity.HasIndex(t => t.SalesRepId)
+                  .HasDatabaseName("IX_Teachers_SalesRepId")
+                  .HasFilter("[SalesRepId] IS NOT NULL");
+        });
+        #endregion
+
+        #region AdminNote (internal notes about a teacher)
+        modelBuilder.Entity<AdminNote>(entity =>
+        {
+            entity.ToTable("AdminNotes");
+            entity.HasKey(n => n.Id);
+            entity.Property(n => n.Body).IsRequired().HasMaxLength(4000);
+            entity.Property(n => n.AuthorName).IsRequired().HasMaxLength(128);
+
+            entity.HasOne(n => n.Teacher)
+                  .WithMany()
+                  .HasForeignKey(n => n.TeacherId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // The Notes tab: pinned first, then newest. AuthorUserId is a plain audit column (no FK).
+            entity.HasIndex(n => new { n.TeacherId, n.IsPinned, n.CreateAt })
+                  .HasDatabaseName("IX_AdminNotes_TeacherId_IsPinned_CreateAt");
+
+            // The "needs follow-up" list, which only ever reads rows that actually carry a date.
+            entity.HasIndex(n => n.FollowUpDate)
+                  .HasDatabaseName("IX_AdminNotes_FollowUpDate")
+                  .HasFilter("[FollowUpDate] IS NOT NULL AND [IsDeleted] = 0");
+
+            entity.HasQueryFilter(n => !n.IsDeleted);
+        });
+        #endregion
+
+        #region TeacherUsageDay (per-teacher-per-day activity facts)
+        modelBuilder.Entity<TeacherUsageDay>(entity =>
+        {
+            entity.ToTable("TeacherUsageDays");
+            entity.HasKey(d => d.Id);
+
+            entity.HasOne(d => d.Teacher)
+                  .WithMany()
+                  .HasForeignKey(d => d.TeacherId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // One row per teacher per day. The unique index is what makes the rollup's
+            // delete-and-rewrite window provably non-duplicating (CLAUDE.md §6.4 idempotency).
+            entity.HasIndex(d => new { d.TeacherId, d.ActivityDate })
+                  .IsUnique()
+                  .HasDatabaseName("UX_TeacherUsageDays_TeacherId_ActivityDate");
+
+            // Platform-wide "what happened on day X" trend queries scan by date across all teachers.
+            entity.HasIndex(d => d.ActivityDate)
+                  .HasDatabaseName("IX_TeacherUsageDays_ActivityDate");
+        });
+        #endregion
+
+        #region TeacherUsageSnapshot (current per-teacher usage read model)
+        modelBuilder.Entity<TeacherUsageSnapshot>(entity =>
+        {
+            entity.ToTable("TeacherUsageSnapshots");
+            entity.HasKey(s => s.Id);
+
+            // Enums stored as tinyint so the bands sort and filter cheaply in SQL. The UI never sees
+            // these numbers — the global JsonStringEnumConverter serializes them as names.
+            entity.Property(s => s.Cadence).HasConversion<byte>().IsRequired();
+            entity.Property(s => s.Depth).HasConversion<byte>().IsRequired();
+            entity.Property(s => s.Operators).HasConversion<byte>().IsRequired();
+
+            entity.HasOne(s => s.Teacher)
+                  .WithMany()
+                  .HasForeignKey(s => s.TeacherId)
+                  .OnDelete(DeleteBehavior.NoAction);
+
+            // Exactly one snapshot per teacher — the rollup upserts against this.
+            entity.HasIndex(s => s.TeacherId)
+                  .IsUnique()
+                  .HasDatabaseName("UX_TeacherUsageSnapshots_TeacherId");
+
+            // The usage grid's three axis filters, each paged newest-activity-first.
+            entity.HasIndex(s => new { s.Cadence, s.LastActivityAt })
+                  .HasDatabaseName("IX_TeacherUsageSnapshots_Cadence_LastActivityAt");
+            entity.HasIndex(s => new { s.Operators, s.LastActivityAt })
+                  .HasDatabaseName("IX_TeacherUsageSnapshots_Operators_LastActivityAt");
+            entity.HasIndex(s => new { s.HasRealData, s.Cadence })
+                  .HasDatabaseName("IX_TeacherUsageSnapshots_HasRealData_Cadence");
+        });
+        #endregion
+
+        #region AdminAccessLog (SuperAdmin read-only "view as teacher" audit)
+        modelBuilder.Entity<AdminAccessLog>(entity =>
+        {
+            entity.ToTable("AdminAccessLogs");
+            entity.HasKey(l => l.Id);
+            entity.Property(l => l.AdminName).IsRequired().HasMaxLength(128);
+            entity.Property(l => l.Route).IsRequired().HasMaxLength(512);
+
+            // Append-only trail: AdminUserId and TeacherId are plain audit columns with NO FK, so
+            // purging either party can never cascade into or block deletion of the record that they
+            // appear in. Read "who looked at this teacher" and "what did this admin look at".
+            entity.HasIndex(l => new { l.TeacherId, l.CreateAt })
+                  .HasDatabaseName("IX_AdminAccessLogs_TeacherId_CreateAt");
+            entity.HasIndex(l => new { l.AdminUserId, l.CreateAt })
+                  .HasDatabaseName("IX_AdminAccessLogs_AdminUserId_CreateAt");
         });
         #endregion
 

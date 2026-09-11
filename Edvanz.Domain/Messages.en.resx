@@ -2748,4 +2748,61 @@
   <data name="DeviceBlockedNotifBody" xml:space="preserve">
     <value>{0} tried to open your account from a different phone and was blocked. Open My Students and reset their device if this is really their phone.</value>
   </data>
+  <data name="SalesRepNotFound" xml:space="preserve">
+    <value>Sales rep not found.</value>
+  </data>
+  <data name="SalesRepNameRequired" xml:space="preserve">
+    <value>A sales rep name is required.</value>
+  </data>
+  <data name="SalesRepNameDuplicate" xml:space="preserve">
+    <value>A sales rep with this name already exists.</value>
+  </data>
+  <data name="SalesRepCreated" xml:space="preserve">
+    <value>Sales rep added.</value>
+  </data>
+  <data name="SalesRepUpdated" xml:space="preserve">
+    <value>Sales rep updated.</value>
+  </data>
+  <data name="SalesRepAssigned" xml:space="preserve">
+    <value>Sales attribution updated.</value>
+  </data>
+  <data name="AdminNoteCreated" xml:space="preserve">
+    <value>Note saved.</value>
+  </data>
+  <data name="AdminNoteDeleted" xml:space="preserve">
+    <value>Note deleted.</value>
+  </data>
+  <data name="AdminNoteNotFound" xml:space="preserve">
+    <value>Note not found.</value>
+  </data>
+  <data name="AdminNoteBodyRequired" xml:space="preserve">
+    <value>The note cannot be empty.</value>
+  </data>
+  <data name="TeacherUsageRecomputed" xml:space="preserve">
+    <value>Usage recomputed for this teacher.</value>
+  </data>
+  <data name="InsightWentQuiet" xml:space="preserve">
+    <value>Was working regularly, then went silent. The freshest ones are the easiest to win back.</value>
+  </data>
+  <data name="InsightAssistantOnly" xml:space="preserve">
+    <value>Assistants are still working, but the teacher has stopped logging in. The account looks busy while its owner is drifting away.</value>
+  </data>
+  <data name="InsightNeverStarted" xml:space="preserve">
+    <value>Registered a while ago and still has nothing set up that would work.</value>
+  </data>
+  <data name="InsightSetUpNotRunning" xml:space="preserve">
+    <value>Properly configured — students, sessions, class days — but nobody has touched it in a month.</value>
+  </data>
+  <data name="InsightSingleModule" xml:space="preserve">
+    <value>Using only one part of the product. Everything else is paid for and untouched.</value>
+  </data>
+  <data name="InsightSessionLessRoster" xml:space="preserve">
+    <value>Has students, but none is assigned to a session, so every one of them opens an empty app.</value>
+  </data>
+  <data name="InsightNewlyLive" xml:space="preserve">
+    <value>Did something real for the first time this week.</value>
+  </data>
+  <data name="InsightExpiringWhileActive" xml:space="preserve">
+    <value>Actively using the product with a subscription that has expired or is about to.</value>
+  </data>
 </root>
