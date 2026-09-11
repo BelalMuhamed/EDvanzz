@@ -1157,10 +1157,12 @@ public sealed class VideoAnalyticsRowDto
 /// scoped group is counted once, and the totals are SUMMED FROM the rows rather than
 /// counted separately — the header can never disagree with the list under it.
 ///
-/// These totals may therefore differ from the video detail card's seen/unseen counts on
-/// legacy data carrying a per-student <c>VideoScope</c> row whose student no longer
-/// exists: that row is counted by the audience query (which does not join
-/// <c>TeacherStudents</c>) but has no student to appear in any class row.
+/// They also agree with the video detail card's seen/unseen counts. They briefly could
+/// not: the audience query's per-student branch did not join <c>TeacherStudents</c>, so a
+/// legacy scope row whose student no longer exists was counted in the header while having
+/// no student to appear in any class row. That branch now joins like its siblings, so
+/// both sides count one population — summing from the rows is belt-and-braces, not a
+/// workaround for a live discrepancy.
 /// </summary>
 public sealed class VideoSessionWatchBreakdownDto
 {

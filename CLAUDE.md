@@ -954,6 +954,50 @@ teacher ever saw a request. Reproduced on prod 2026-09-11: fake code → `pendin
   the missing-parent-phone nudge lived only in Settings — it is now on the inbox itself, where the
   teacher is actively approving people who would not have needed approving at all.
 
+### 7.8 Videos watched by class, exam grade chips, and the day a scan belongs to (2026-09-11)
+
+**A scan marks the day the REGISTER is on, never "today".** `TeacherAttendanceQrScanView`
+builds its OWN roster cubit, and it was never handed a date — so every scan landed on the
+teacher's current local day no matter which class day was open. Opening an exam's class day
+and scanning wrote the mark onto the most recent class instead: the exam still read absent,
+and a day the student may not have attended gained a Present nobody made. Tapping a row by
+hand was always correct, which is why it looked random. The header said only "Take
+attendance" — no class, no date — so nothing on screen could catch it. `occurrenceDate` is
+now threaded route → view → cubit (offline scans inherit it too: the queued op stores the
+date from the request), and the header names the class and the day, spelling out any day
+that is not today. NOT in the error colour — editing an old register is normal and the exam
+screen sends you there deliberately. **Never let a sub-screen that builds its own cubit
+re-derive scoping context the caller already had, and never let a screen write to a day it
+does not name.**
+
+**`GET /api/videos/{videoAssetId}/analytics/by-session`** — one row per class with
+in-scope / watched / unseen / completed, single grouped query, not paginated. Rows are keyed
+on the student's own `TeacherStudents.SessionId` — the SAME column the audience resolves
+through — so a class reachable both directly AND through a scoped group is counted once and
+the rows always sum to the header. `GET .../analytics` gained `sessionId` / `sessionGroupId`
+filters (the narrower wins) and returns `sessionId` per row. The analytics session LABEL now
+comes from `Sessions` via that column rather than the student's active
+`StudentSessionAssignment` (a denormalized snapshot a rename never updated), which also
+removed a LEFT JOIN that would have duplicated a student carrying two active assignments.
+
+**Exam session roster `?graded=true|false`** backs the grade screen's All / Graded / Not
+graded chips. It filters the SERVER page — the roster pages, so a chip narrowing only the
+loaded rows would hide everyone past page 1 behind a number claiming otherwise — using the
+SAME predicate `ExamService.ComputeStats` uses for `GradedCount` (flag AND value), so the
+chip and its list can never disagree by one.
+
+**Video duration is learned, and both places matter.** The app scrapes it from the YouTube
+link on paste (`YoutubeDurationFetcher`, key-less oEmbed → watch page) and the student's
+player reports it. `start-watch` fires on the play transition, before the player's metadata
+is necessarily loaded, so it often reported 0 — and a video with no length reports NO
+completion percentage to anyone (watch SECONDS are unaffected; both clamps already skipped a
+zero duration). The stop/progress report now also carries it, **first-learn only**
+(`stored == 0`): refining a known value there would write on every pause, because two
+players can disagree by a second and each report sits inside the ±5% tolerance. Refinement
+stays on `start-watch`. When the scrape comes back empty the teacher can type the minutes —
+that box LATCHES on manual entry, because keyed off "is the length known" the first digit of
+"30" makes it known and swaps the box for the read-only chip mid-keystroke.
+
 ---
 
 ## 8. Known Bugs (Fixed — Do Not Reintroduce)
@@ -974,6 +1018,9 @@ teacher ever saw a request. Reproduced on prod 2026-09-11: fake code → `pendin
 | BUG-12 | `ParentUserController` (all 10 endpoints) | Mass horizontal IDOR: the controller had NO `[Authorize]`/`[ModulePermission]` and injected no identity service, so `parentUserId`/`childId` were trusted straight from the route — any authenticated user (any role) could read/modify/delete ANY parent's profile, dashboard, and children. Fixed 2026-07-16 (commit `ece9fab`): identity is resolved ONLY from the JWT via `ResolveParentUserIdAsync()` (`User.Id` → active `ParentUser`); the `{parentUserId}` route segment is kept for wire-compat but IGNORED (0/null/wrong/mismatched all behave identically); every `childId` is scoped to the resolved parent inside the service (`GetActiveChildAsync(parentUserId, childId)`); class `[Authorize]` + per-endpoint `[ModulePermission(roles:["Parent"], roleOnly:true)]` added; `InitializeParentUser` forces `dto.UserId` from the JWT (registration still initializes parents server-side via `UserService`, unaffected). Mirrors `ParentAttendanceController`/`ParentPaymentController`. Generalizes §3.3 — never trust a route/body identity id (teacherId, parentUserId, childId); resolve from the token. |
 | BUG-14 | Parent portal: a wrong student code was answered "request sent" and waited forever | `RequestAccessAsync` returned the neutral pending payload for a nonexistent `StudentCode` **without writing a row**, and the portal's `/pending` treated the resulting `state: "none"` as "still waiting", refreshing every 15s indefinitely. The parent believed they had asked; no teacher could ever see or approve anything; support could not tell the case apart from a slow teacher. Fixed 2026-09-11 — honest 404 + a metered enumeration budget, and `/pending` renders only a genuine `pending`. Full contract in §7.7. **Never make a discarded request answer `pending` again**, and never let a screen assert a state the API did not return. |
 | BUG-13 | `MessagingController` auth commented + `TeacherController.GetTeachers` (`GET /api/teacher/list`) ungated | Two authorization holes closed 2026-07-16 (commit `000f009`). (a) MessagingController's class `[Authorize]` and the `send`/`history`/`resend` `[ModulePermission]` gates were commented out (this was §7.1 P0-A) → any authenticated caller could send manual messages, read history, and resend; restored verbatim — `"SendManual"`/`"ViewHistory"` are registered Messaging permissions (`DbInitializer`), `roleOnly:false` runs the `PermissionRequirement(module,permission)` check, and the tenant is still JWT-forced by `TenantScopeFilter`. (b) `GetTeachers` is documented Super-Admin-only but carried no role gate → any authenticated user could enumerate every teacher (name, code, phone, capacity, subscription); added `[ModulePermission(roles:["SuperAdmin"], roleOnly:true)]` (`roleOnly:true` → role-membership gate). Do not re-comment controller auth attributes or ship an admin-only endpoint without a role gate. |
+| BUG-15 | `TeacherAttendanceQrScanView` scanned into the wrong day | The scanner builds its own roster cubit and was never handed `occurrenceDate`, so every scan wrote to the teacher's current local day whatever class day the register was showing. Opening an exam's class day and scanning marked the student present on the most recent class: the exam still read absent, a different day gained a Present nobody made, and the header ("Take attendance", no class, no date) gave no way to notice. Fixed 2026-09-11 — the day is threaded route → view → cubit (queued offline scans carry it too) and the header names class and day. Tapping a row was always correct; only the scanner was wrong, which is why it read as random. **Never let a sub-screen re-derive scoping context its caller already had, and never let a screen write to a day it does not name.** See §7.8. |
+| BUG-16 | `COUNT(NULL)` from a predicate EF folded to a constant | `g.Count(x => x.SomePredicate)` in a GroupBy projection, where the predicate collapses to a compile-time constant `false` (a captured C# bool that is false for this call), is folded by EF into literal `COUNT(NULL)` — SQL Server rejects it outright (*8117, "Operand data type NULL is invalid for count operator"*) and the endpoint 500s. Data-dependent, so it survived review, unit tests and a `ToQueryString()` check that only ran the true branch; three live videos whose duration was still 0 returned 500 from `analytics/by-session`. Fixed 2026-09-11 by expressing "impossible" as an unreachable VALUE (`long.MaxValue` watch-seconds bar) instead of a bool, which keeps it a real column comparison and removes the division from SQL entirely. **When a captured flag gates a predicate inside a SQL aggregate, run `ToQueryString()` for BOTH values of the flag.** |
+| BUG-17 | Tracking-view `TotalCount` counted students the list could not show | The count was taken on the obligations alone, before the projection joins `TeacherStudent` (soft-delete filtered) and drops purged students. Exam 69 session 81 reported 162 and could only render 161; "not graded" reported 86 and rendered 85, so paging asked for a page that did not exist. Fixed 2026-09-11 with the `.Where(o => o.TeacherStudent != null)` BUG-8 already requires, applied BEFORE the count. The audience helper's per-student branch had the same shape and now joins `TeacherStudents` like its siblings. **A count that labels a list must be taken on the same population the list projects through.** |
 
 **CI migration delivery — root cause of the 2026-07-15/16 attendance outage (deploy.yml `Apply EF migrations`) — RESOLVED 2026-07-16.** `azure/sql-action@v2` used to run the multi-batch idempotent `migrate.sql` (one `BEGIN TRAN…COMMIT` per migration) via go-sqlcmd **without `-b`**, so when a migration's batch errored, its own transaction rolled back (migration NOT recorded) but the runner **continued to the next migration and still exited 0** — a broken migration was silently skipped while the code that needed it deployed anyway. This is why BUG-10 shipped, and it also silently skipped the `20260708193718`/`20260708220307` phone-index migrations on every deploy since 2026-07-08 (see BUG-11). Fixed by: (a) BUG-11's repair migration clearing the failing backlog, (b) `arguments: '-b'` on the sql-action step (any SQL error → non-zero exit → job fails BEFORE `az webapp deploy`), and (c) the two pre-Azure migration gates described in §0 (model-coverage check + fresh-DB rehearsal of `migrate.sql`). Do not remove `-b` or the gates.
 
