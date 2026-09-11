@@ -35,8 +35,18 @@ public static class AdminInsightsCsv
         foreach (var row in rows)
             sb.AppendLine(string.Join(',', row.Select(Escape)));
 
-        // Encoding with encoderShouldEmitUTF8Identifier: true is what writes the BOM.
-        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: true).GetBytes(sb.ToString());
+        // The BOM must be written EXPLICITLY. `new UTF8Encoding(true).GetBytes(...)` does NOT emit
+        // it — that flag only governs GetPreamble(), which StreamWriter would call but GetBytes
+        // never does. Relying on the flag alone silently produced a BOM-less file, and Excel then
+        // read every Arabic name as mojibake.
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        byte[] preamble = encoding.GetPreamble();
+        byte[] body = encoding.GetBytes(sb.ToString());
+
+        var result = new byte[preamble.Length + body.Length];
+        preamble.CopyTo(result, 0);
+        body.CopyTo(result, preamble.Length);
+        return result;
     }
 
     /// <summary>
