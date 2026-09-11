@@ -1502,23 +1502,34 @@ public sealed class VideoService : IVideoService
         // Applied BEFORE the clamps below, which bound the delta and the resume position by
         // the video's length: learning it now makes this very report the first one they can
         // actually bound.
-        if (request.VideoDurationSeconds > 0)
+        // This runs on EVERY pause, and the client reports the length on every one of
+        // them once it knows it — so the already-agreed case must cost nothing. Only a
+        // report that DIFFERS from what is stored is worth a write, and the reload the
+        // start path does is unnecessary here: ExecuteUpdate sets exactly the reported
+        // value, so when it reports a row changed, that value is the stored one. Kept in
+        // a local rather than written onto the tracked entity, which SaveChangesAsync
+        // below would otherwise re-issue as a second UPDATE.
+        int effectiveDurationSeconds = video.DurationSeconds;
+        if (request.VideoDurationSeconds > 0
+            && request.VideoDurationSeconds != effectiveDurationSeconds)
         {
-            await _unitOfWork.VideoAssetsRepo.TryUpdateDurationWithinToleranceAsync(
-                videoAssetId,
-                request.VideoDurationSeconds,
-                VideoConstants.DurationToleranceFraction);
+            bool durationAccepted = await _unitOfWork.VideoAssetsRepo
+                .TryUpdateDurationWithinToleranceAsync(
+                    videoAssetId,
+                    request.VideoDurationSeconds,
+                    VideoConstants.DurationToleranceFraction);
 
-            video = await _unitOfWork.VideoAssetsRepo
-                .GetVideoByIdAndTeacherAsync(videoAssetId, teacherId) ?? video;
+            if (durationAccepted)
+                effectiveDurationSeconds = request.VideoDurationSeconds;
         }
 
         var utcNow = DateTime.UtcNow;
 
         var (acceptedDelta, deltaWasClamped) = ClampDelta(
-            request.DeltaSeconds, anchorUtc.Value, utcNow, video.DurationSeconds);
+            request.DeltaSeconds, anchorUtc.Value, utcNow, effectiveDurationSeconds);
 
-        int clampedPosition = ClampPosition(request.PositionSeconds, video.DurationSeconds);
+        int clampedPosition =
+            ClampPosition(request.PositionSeconds, effectiveDurationSeconds);
 
         var increment = await _unitOfWork.VideoAssetsRepo.IncrementWatchAtomicAsync(
             videoAssetId, teacherStudentId, acceptedDelta, clampedPosition, utcNow);
