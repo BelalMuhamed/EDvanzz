@@ -1228,11 +1228,22 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
         // never disagree about who is in scope.
         var resolvedStudentIds = GetResolvedStudentIdsForVideoQuery(teacherId, videoAssetId);
 
-        // A zero duration means "not known yet" — nobody can be Completed. Guarding it
-        // as a captured flag (rather than relying on a ternary to short-circuit inside
-        // SQL) keeps the divisor non-zero on every branch the server may evaluate.
-        bool durationKnown = durationSeconds > 0;
-        int safeDuration = durationKnown ? durationSeconds : 1;
+        // "Completed" as a WATCH-SECONDS BAR rather than a percentage, so the test is a
+        // plain column-vs-parameter comparison: no division in SQL (no divisor to guard)
+        // and nothing EF can fold away.
+        //
+        // Exactly equivalent to the percentage form the aggregates use —
+        // floor(w*100/d) >= T  <=>  w*100 >= T*d  <=>  w >= ceil(T*d/100) — so this
+        // screen and the seen/unseen cards agree student for student.
+        //
+        // A zero duration means "not learned yet", so nobody can be Completed. Expressing
+        // that as an unreachable bar matters: writing it as a captured `false` let EF
+        // fold the predicate to a constant and emit `COUNT(NULL)`, which SQL Server
+        // rejects outright ("Operand data type NULL is invalid for count operator") — a
+        // 500 on every video whose duration no student had established yet.
+        long completedMinWatchSeconds = durationSeconds > 0
+            ? ((long)durationSeconds * VideoConstants.CompletionThresholdPercent + 99) / 100
+            : long.MaxValue;
 
         // Flatten to scalars BEFORE grouping: EF translates a GroupBy over scalar keys
         // with counted predicates, but not one whose elements are joined entities.
@@ -1255,10 +1266,8 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
                     ? sn.SessionGroup.GroupName
                     : null,
                 HasOpened = an != null,
-                IsCompleted = durationKnown
-                    && an != null
-                    && an.TotalWatchSeconds * 100 / safeDuration
-                        >= VideoConstants.CompletionThresholdPercent,
+                IsCompleted = an != null
+                    && an.TotalWatchSeconds >= completedMinWatchSeconds,
             };
 
         // One grouped round trip — not one query per session.
