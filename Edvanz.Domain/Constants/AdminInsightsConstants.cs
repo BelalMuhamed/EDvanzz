@@ -71,7 +71,21 @@ public static class AdminInsightsConstants
     /// <summary>Window in which a first-ever activity counts as "newly live".</summary>
     public const int NewlyLiveWithinDays = 7;
 
+    /// <summary>
+    /// Window in which a subscription start counts as "newly subscribed". 30 days rather than 7:
+    /// onboarding a teacher takes weeks, not days, and a signup that has still not started after a
+    /// fortnight is exactly the one worth calling.
+    /// </summary>
+    public const int NewlySubscribedWithinDays = 30;
+
     /// <summary>How many named teachers each insight card carries inline; the rest sit behind "see all".
     /// Counts alone are not actionable — every card names names.</summary>
     public const int InsightCardPreviewSize = 5;
+
+    /// <summary>
+    /// Hard cap on rows in one CSV export. Generous enough to cover the whole platform many times
+    /// over, but bounded so a mis-filtered export can never build an unbounded string in memory on
+    /// a small App Service plan.
+    /// </summary>
+    public const int CsvExportMaxRows = 5000;
 }

@@ -28,12 +28,23 @@ public class TeacherUsageListItemDto
     public string? Username { get; set; }
     public string TeacherCode { get; set; } = null!;
     public string? PhoneNumber { get; set; }
+
+    /// <summary>Second way to reach them when the phone is dead.</summary>
+    public string? Email { get; set; }
+
     public DateTime RegisteredAt { get; set; }
     public AccountStatus AccountStatus { get; set; }
 
     // ── Commercial ─────────────────────────────────────────────────────────────
     public string? SubscriptionStatus { get; set; }
+
+    /// <summary>When the current subscription started — what "newly subscribed" is measured from.</summary>
+    public DateTime? SubscriptionStartDate { get; set; }
+
     public DateTime? SubscriptionEndDate { get; set; }
+
+    /// <summary>Full / Managerial / ManagerialPlus.</summary>
+    public string? PlanType { get; set; }
     public long? SalesRepId { get; set; }
     public string? SalesRepName { get; set; }
     public string? AcquisitionSource { get; set; }
@@ -123,6 +134,12 @@ public class TeacherUsageQueryRequest
     public string? SubscriptionStatus { get; set; }
     public DateTime? RegisteredFrom { get; set; }
     public DateTime? RegisteredTo { get; set; }
+
+    /// <summary>
+    /// Only teachers whose current subscription started within this many days. Setting it also
+    /// forces newest-subscription-first ordering, because that is the question being asked.
+    /// </summary>
+    public int? SubscribedWithinDays { get; set; }
 
     public TeacherUsageSortBy SortBy { get; set; } = TeacherUsageSortBy.LastActivity;
     public SortDirection SortDirection { get; set; } = SortDirection.Desc;

@@ -53,6 +53,7 @@ public class AdminInsightsRepo : IAdminInsightsRepo
                    Username = t.User.Username,
                    TeacherCode = t.TeacherCode,
                    PhoneNumber = t.User.PhoneNumber,
+                   Email = t.User.Email,
                    RegisteredAt = t.CreateAt,
                    AccountStatus = t.AccountStatus,
 
@@ -63,7 +64,9 @@ public class AdminInsightsRepo : IAdminInsightsRepo
                        : nowUtc >= sub.EndDate ? Domain.Enums.SubscriptionStatus.Expired
                        : sub.EndDate <= soonUtc ? Domain.Enums.SubscriptionStatus.ExpiringSoon
                        : Domain.Enums.SubscriptionStatus.Active,
+                   SubscriptionStartDate = sub == null ? null : sub.StartDate,
                    SubscriptionEndDate = sub == null ? null : sub.EndDate,
+                   PlanType = sub == null ? null : sub.PlanType,
 
                    SalesRepId = t.SalesRepId,
                    SalesRepName = rep == null ? null : rep.Name,
@@ -132,6 +135,14 @@ public class AdminInsightsRepo : IAdminInsightsRepo
         // Registration bounds: `from` inclusive from midnight, `to` exclusive of the NEXT day, so a
         // "20 Aug → 25 Aug" filter catches everything on the 25th regardless of time of day. Same
         // convention as the existing teacher-list registeredFrom/registeredTo filter.
+        // Newly subscribed: the CURRENT subscription started inside the window. Same meaning as
+        // `subscribedWithinDays` on the legacy teacher list, so the two screens never disagree.
+        if (filter.SubscribedWithinDays is > 0)
+        {
+            DateTime subCutoff = DateTime.UtcNow.AddDays(-filter.SubscribedWithinDays.Value);
+            query = query.Where(r => r.SubscriptionStartDate != null && r.SubscriptionStartDate >= subCutoff);
+        }
+
         if (filter.RegisteredFrom is not null)
             query = query.Where(r => r.RegisteredAt >= filter.RegisteredFrom.Value.Date);
         if (filter.RegisteredToExclusive is not null)
@@ -139,7 +150,12 @@ public class AdminInsightsRepo : IAdminInsightsRepo
 
         int total = await query.CountAsync(ct);
 
-        query = ApplySort(query, filter.SortBy, filter.Descending);
+        // The newly-subscribed filter carries its own ordering, exactly as the legacy teacher list
+        // does — asking for "who just subscribed" and getting them in last-activity order would
+        // bury the newest signups, which are the whole point of the question.
+        query = filter.SubscribedWithinDays is > 0
+            ? query.OrderByDescending(r => r.SubscriptionStartDate).ThenByDescending(r => r.TeacherId)
+            : ApplySort(query, filter.SortBy, filter.Descending);
 
         var rows = await query
             .Skip((filter.Page - 1) * filter.PageSize)
@@ -293,6 +309,7 @@ public class AdminInsightsRepo : IAdminInsightsRepo
         DateTime quietBefore = nowUtc.AddDays(-AdminInsightsConstants.WentQuietAfterDays);
         DateTime startedBefore = nowUtc.AddDays(-AdminInsightsConstants.NeverStartedGraceDays);
         DateTime newlyLiveAfter = nowUtc.AddDays(-AdminInsightsConstants.NewlyLiveWithinDays);
+        DateTime newlySubscribedAfter = nowUtc.AddDays(-AdminInsightsConstants.NewlySubscribedWithinDays);
 
         query = kind switch
         {
@@ -338,6 +355,13 @@ public class AdminInsightsRepo : IAdminInsightsRepo
                          && r.SubscriptionStatus != Domain.Enums.SubscriptionStatus.Active)
                 .OrderByDescending(r => r.ActiveDays30),
 
+            // Paid inside the window. Ordered so the ones with NOTHING working come first: a
+            // teacher who has just paid and cannot get started is the call that prevents a refund.
+            AdminInsightKind.NewlySubscribed => query
+                .Where(r => r.SubscriptionStartDate != null && r.SubscriptionStartDate >= newlySubscribedAfter)
+                .OrderBy(r => r.HasRealData)
+                .ThenByDescending(r => r.SubscriptionStartDate),
+
             _ => query.OrderByDescending(r => r.LastActivityAt)
         };
 
@@ -374,6 +398,27 @@ public class AdminInsightsRepo : IAdminInsightsRepo
             .OrderByDescending(n => n.IsPinned)
             .ThenByDescending(n => n.CreateAt)
             .ToListAsync(ct);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<long, IReadOnlyList<AdminNote>>> GetNotesForTeachersAsync(
+        IReadOnlyCollection<long> teacherIds, CancellationToken ct = default)
+    {
+        if (teacherIds.Count == 0)
+            return new Dictionary<long, IReadOnlyList<AdminNote>>();
+
+        // ONE query for every exported teacher. Same pinned-first ordering as the single-teacher
+        // read, so the export reads in the order the Notes tab shows.
+        var rows = await _context.AdminNotes
+            .AsNoTracking()
+            .Where(n => teacherIds.Contains(n.TeacherId))
+            .OrderByDescending(n => n.IsPinned)
+            .ThenByDescending(n => n.CreateAt)
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(n => n.TeacherId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<AdminNote>)g.ToList());
+    }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<TeacherOperatorRow>> GetOperatorsAsync(

@@ -39,6 +39,16 @@ public interface IAdminInsightsService
     /// </summary>
     Task<Result<TeacherUsageDetailDto>> RecomputeTeacherUsageAsync(long teacherId, int days);
 
+    /// <summary>
+    /// Exports the CURRENTLY FILTERED teachers as a CSV, with everything needed to identify and
+    /// contact each one — including their admin notes.
+    ///
+    /// Deliberately exports the whole filtered set, not the page on screen: the point of an export
+    /// is to hand a rep their call list, and a list truncated at 25 rows is worse than none. Bounded
+    /// by <c>AdminInsightsConstants.CsvExportMaxRows</c>.
+    /// </summary>
+    Task<Result<byte[]>> ExportTeachersCsvAsync(TeacherUsageQueryRequest request);
+
     // ── Sales attribution ──────────────────────────────────────────────────────
 
     /// <summary>Every sales rep with their book of accounts rolled up by outcome.</summary>

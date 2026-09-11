@@ -2793,4 +2793,7 @@
   <data name="InsightExpiringWhileActive" xml:space="preserve">
     <value>بيستخدم النظام فعلاً والاشتراك خلص أو قرب يخلص.</value>
   </data>
+  <data name="InsightNewlySubscribed" xml:space="preserve">
+    <value>لسه دافعين. اللي لسه محصلش يظبط حسابه بييجي الأول — المدرس اللي دفع ومش عارف يبدأ ده الاسترداد اللي لسه تقدر تمنعه.</value>
+  </data>
 </root>

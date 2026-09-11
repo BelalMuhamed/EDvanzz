@@ -118,6 +118,7 @@ public class AdminInsightsService : IAdminInsightsService
         (AdminInsightKind.SetUpNotRunning, "warning"),
         (AdminInsightKind.SessionLessRoster, "warning"),
         (AdminInsightKind.NeverStarted, "warning"),
+        (AdminInsightKind.NewlySubscribed, "info"),
         (AdminInsightKind.SingleModule, "info"),
         (AdminInsightKind.NewlyLive, "info")
     };
@@ -148,6 +149,12 @@ public class AdminInsightsService : IAdminInsightsService
                 r.FirstActivityAt is null ? null : $"first activity {r.FirstActivityAt:yyyy-MM-dd}",
             AdminInsightKind.ExpiringWhileActive =>
                 $"{r.ActiveDays30} active days · subscription {r.SubscriptionStatus}",
+            // Whether they have got going yet is the whole point of this card, so it leads.
+            AdminInsightKind.NewlySubscribed =>
+                (r.HasRealData ? "set up" : "NOT set up yet")
+                + (r.SubscriptionStartDate is null
+                    ? string.Empty
+                    : $" · subscribed {(int)(DateTime.UtcNow - r.SubscriptionStartDate.Value).TotalDays} days ago"),
             _ => null
         };
 
@@ -173,10 +180,33 @@ public class AdminInsightsService : IAdminInsightsService
     public async Task<Result<PaginatedResponse<List<TeacherUsageListItemDto>>>> GetUsageGridAsync(
         TeacherUsageQueryRequest request)
     {
-        var filter = new AdminUsageFilter
+        var filter = BuildFilter(request, Math.Max(1, request.Page), Math.Clamp(request.PageSize, 1, 100));
+
+        var (rows, total) = await _unitOfWork.AdminInsightsRepo.GetUsageGridAsync(filter);
+        var items = await EnrichRowsAsync(rows);
+
+        var response = new PaginatedResponse<List<TeacherUsageListItemDto>>
         {
-            Page = Math.Max(1, request.Page),
-            PageSize = Math.Clamp(request.PageSize, 1, 100),
+            totalCount = total,
+            page = filter.Page,
+            pageSize = filter.PageSize,
+            totalPages = (int)Math.Ceiling((double)total / filter.PageSize),
+            data = items
+        };
+
+        return Result<PaginatedResponse<List<TeacherUsageListItemDto>>>.Success(response, _localizer);
+    }
+
+    /// <summary>
+    /// Translates the wire request into the repo filter. Shared by the grid and the CSV export so
+    /// the export can never disagree with the list the admin is looking at — an export that quietly
+    /// applies different filters is worse than no export.
+    /// </summary>
+    private static AdminUsageFilter BuildFilter(TeacherUsageQueryRequest request, int page, int pageSize)
+        => new()
+        {
+            Page = page,
+            PageSize = pageSize,
             // Folded through the same normalizer the SQL side uses, so مصطفي ≡ مصطفى.
             NormalizedSearch = string.IsNullOrWhiteSpace(request.Search)
                 ? null
@@ -197,24 +227,10 @@ public class AdminInsightsService : IAdminInsightsService
             // Inclusive of the whole `to` day, via an exclusive next-day bound — same convention as
             // the existing teacher-list filter, so "20 Aug → 25 Aug" catches all of the 25th.
             RegisteredToExclusive = request.RegisteredTo?.Date.AddDays(1),
+            SubscribedWithinDays = request.SubscribedWithinDays,
             SortBy = request.SortBy.ToString(),
             Descending = request.SortDirection == SortDirection.Desc
         };
-
-        var (rows, total) = await _unitOfWork.AdminInsightsRepo.GetUsageGridAsync(filter);
-        var items = await EnrichRowsAsync(rows);
-
-        var response = new PaginatedResponse<List<TeacherUsageListItemDto>>
-        {
-            totalCount = total,
-            page = filter.Page,
-            pageSize = filter.PageSize,
-            totalPages = (int)Math.Ceiling((double)total / filter.PageSize),
-            data = items
-        };
-
-        return Result<PaginatedResponse<List<TeacherUsageListItemDto>>>.Success(response, _localizer);
-    }
 
     /// <inheritdoc />
     public async Task<Result<PaginatedResponse<List<TeacherUsageListItemDto>>>> GetInsightTeachersAsync(
@@ -309,8 +325,11 @@ public class AdminInsightsService : IAdminInsightsService
         PhoneNumber = r.PhoneNumber,
         RegisteredAt = r.RegisteredAt,
         AccountStatus = r.AccountStatus,
+        Email = r.Email,
         SubscriptionStatus = r.SubscriptionStatus?.ToString(),
+        SubscriptionStartDate = r.SubscriptionStartDate,
         SubscriptionEndDate = r.SubscriptionEndDate,
+        PlanType = r.PlanType?.ToString(),
         SalesRepId = r.SalesRepId,
         SalesRepName = r.SalesRepName,
         AcquisitionSource = r.AcquisitionSource,
@@ -438,6 +457,124 @@ public class AdminInsightsService : IAdminInsightsService
 
         return Result<TeacherUsageDetailDto>.Success(
             detail.Data!, _localizer, "TeacherUsageRecomputed");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CSV EXPORT
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <inheritdoc />
+    public async Task<Result<byte[]>> ExportTeachersCsvAsync(TeacherUsageQueryRequest request)
+    {
+        // The SAME filter the grid is showing, but the whole set rather than one page — handing a
+        // rep a call list truncated at 25 rows would be worse than handing them nothing.
+        var filter = BuildFilter(request, page: 1, pageSize: AdminInsightsConstants.CsvExportMaxRows);
+        var (rows, _) = await _unitOfWork.AdminInsightsRepo.GetUsageGridAsync(filter);
+
+        var ids = rows.Select(r => r.TeacherId).ToList();
+        var notes = await _unitOfWork.AdminInsightsRepo.GetNotesForTeachersAsync(ids);
+
+        var headers = new[]
+        {
+            // Identify
+            "Teacher ID", "Name", "Username", "Teacher code", "Account status", "Registered on",
+            // Contact
+            "Phone", "Email",
+            // Commercial
+            "Subscription", "Plan", "Subscribed on", "Expires on", "Sales rep", "How acquired",
+            // Axis 1 — how often
+            "How often", "Active days (7)", "Active days (30)", "Active days (90)", "Actions (30d)",
+            // Axis 2 — what they use
+            "Depth", "Modules used (30d)", "Modules ever used",
+            // Axis 3 — who works it
+            "Who works it", "Teacher last active", "Assistant last active", "Assistants",
+            // Lifespan
+            "First activity", "Last activity",
+            // Setup health — each pair is (total, the part that actually works)
+            "Students", "Students in a session", "Sessions", "Sessions with class days",
+            "Linked accounts", "Linked accounts bound", "Ever marked attendance",
+            "Ever collected money", "Properly set up",
+            // Admin context
+            "Notes", "Note count", "Last note", "Follow up on", "Figures computed"
+        };
+
+        var csvRows = rows.Select(r =>
+        {
+            var teacherNotes = notes.GetValueOrDefault(r.TeacherId) ?? (IReadOnlyList<AdminNote>)Array.Empty<AdminNote>();
+
+            // Notes are flattened into ONE cell, newline-separated and stamped with author and date.
+            // A spreadsheet cannot hold a nested list, and splitting them across columns would make
+            // the row width depend on whoever wrote the most notes.
+            string flattenedNotes = string.Join(
+                "\n",
+                teacherNotes.Select(n =>
+                    $"[{AdminInsightsCsv.Date(n.CreateAt)}] {n.AuthorName}"
+                    + (n.IsPinned ? " (pinned)" : string.Empty)
+                    + $": {n.Body}"));
+
+            // The soonest outstanding follow-up, so a rep can sort the sheet by it.
+            string nextFollowUp = AdminInsightsCsv.Day(
+                teacherNotes.Where(n => n.FollowUpDate is not null)
+                            .Select(n => n.FollowUpDate)
+                            .OrderBy(d => d)
+                            .FirstOrDefault());
+
+            return (IReadOnlyList<string?>)new List<string?>
+            {
+                r.TeacherId.ToString(),
+                r.FullName,
+                r.Username,
+                r.TeacherCode,
+                r.AccountStatus.ToString(),
+                AdminInsightsCsv.Date(r.RegisteredAt),
+
+                r.PhoneNumber,
+                r.Email,
+
+                r.SubscriptionStatus?.ToString(),
+                r.PlanType?.ToString(),
+                AdminInsightsCsv.Date(r.SubscriptionStartDate),
+                AdminInsightsCsv.Date(r.SubscriptionEndDate),
+                r.SalesRepName,
+                r.AcquisitionSource,
+
+                r.Cadence.ToString(),
+                r.ActiveDays7.ToString(),
+                r.ActiveDays30.ToString(),
+                r.ActiveDays90.ToString(),
+                r.TotalWrites30.ToString(),
+
+                r.Depth.ToString(),
+                string.Join(" | ", ModuleNames(r.ModulesUsedMask)),
+                string.Join(" | ", ModuleNames(r.ModulesUsedAllTimeMask)),
+
+                r.Operators.ToString(),
+                AdminInsightsCsv.Date(r.LastTeacherActivityAt),
+                AdminInsightsCsv.Date(r.LastAssistantActivityAt),
+                r.ActiveAssistantCount.ToString(),
+
+                AdminInsightsCsv.Date(r.FirstActivityAt),
+                AdminInsightsCsv.Date(r.LastActivityAt),
+
+                r.StudentCount.ToString(),
+                r.StudentsAssignedToSession.ToString(),
+                r.SessionCount.ToString(),
+                r.SessionsWithOccurrences.ToString(),
+                r.LinkedAccountCount.ToString(),
+                r.BoundAccountCount.ToString(),
+                AdminInsightsCsv.YesNo(r.HasEverMarkedAttendance),
+                AdminInsightsCsv.YesNo(r.HasEverCollectedPayment),
+                AdminInsightsCsv.YesNo(r.HasRealData),
+
+                flattenedNotes,
+                teacherNotes.Count.ToString(),
+                AdminInsightsCsv.Date(teacherNotes.FirstOrDefault()?.CreateAt),
+                nextFollowUp,
+                AdminInsightsCsv.Date(r.ComputedAt)
+            };
+        });
+
+        return Result<byte[]>.Success(AdminInsightsCsv.Build(headers, csvRows), _localizer);
     }
 
     // ════════════════════════════════════════════════════════════════════════

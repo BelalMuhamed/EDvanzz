@@ -2805,4 +2805,7 @@
   <data name="InsightExpiringWhileActive" xml:space="preserve">
     <value>Actively using the product with a subscription that has expired or is about to.</value>
   </data>
+  <data name="InsightNewlySubscribed" xml:space="preserve">
+    <value>Just paid. The ones not set up yet come first — a teacher who cannot get started after paying is the refund you can still prevent.</value>
+  </data>
 </root>

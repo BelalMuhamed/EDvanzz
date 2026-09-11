@@ -36,13 +36,16 @@ public class AdminInsightsController : ApiBaseController
 {
     private readonly IAdminInsightsService _insights;
     private readonly ICurrentUserService _currentUser;
+    private readonly ITimeZoneService _timeZone;
 
     public AdminInsightsController(
         IAdminInsightsService insights,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        ITimeZoneService timeZone)
     {
         _insights = insights;
         _currentUser = currentUser;
+        _timeZone = timeZone;
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -95,6 +98,40 @@ public class AdminInsightsController : ApiBaseController
     {
         if (_currentUser.UserId is null) return UserNotResolved();
         return ToResponse(await _insights.GetUsageGridAsync(request));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 2b: EXPORT THE FILTERED TEACHERS AS CSV
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   Takes the SAME query as the grid and returns the whole filtered set as a CSV — everything
+    //   needed to identify and contact each teacher, plus their admin notes flattened into one cell.
+    //
+    //   It exports the FULL filtered set rather than the page on screen: the point is to hand a rep
+    //   their call list, and a list cut off at 25 rows is worse than none. Capped at 5,000 rows.
+    //
+    //   The file is UTF-8 WITH A BOM so Excel renders Arabic names correctly rather than as
+    //   mojibake, and every cell that could start a formula is neutralised — these rows carry
+    //   free text written by admins and names supplied at sign-up.
+    //
+    // SAMPLE: GET /api/admin/insights/teachers/export?subscribedWithinDays=30
+    //         GET /api/admin/insights/teachers/export?operators=AssistantsOnly
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("teachers/export")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportTeachers([FromQuery] TeacherUsageQueryRequest request)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+
+        var result = await _insights.ExportTeachersCsvAsync(request);
+        if (!result.IsSuccess) return ToResponse(result);
+
+        // Filename stamped in the teacher-tenant's local time, never the server's (Azure runs UTC).
+        var localNow = _timeZone.ConvertUtcToLocal(DateTime.UtcNow);
+        return File(result.Data!, "text/csv", $"edvanz-teachers_{localNow:yyyyMMdd_HHmm}.csv");
     }
 
     // ══════════════════════════════════════════════════════════════════════════

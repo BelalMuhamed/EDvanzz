@@ -58,6 +58,13 @@ public interface IAdminInsightsRepo
     /// </summary>
     Task<IReadOnlyList<AdminNote>> GetNotesForTeacherAsync(long teacherId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Notes for MANY teachers in one query, for the CSV export. A per-teacher fetch across a few
+    /// hundred exported rows would be a few hundred round trips for a single button press.
+    /// </summary>
+    Task<IReadOnlyDictionary<long, IReadOnlyList<AdminNote>>> GetNotesForTeachersAsync(
+        IReadOnlyCollection<long> teacherIds, CancellationToken ct = default);
+
     /// <summary>The people who work an account — the teacher plus every assistant, removed included.</summary>
     Task<IReadOnlyList<TeacherOperatorRow>> GetOperatorsAsync(
         long teacherId, CancellationToken ct = default);
@@ -92,7 +99,14 @@ public enum AdminInsightKind
     NewlyLive = 6,
 
     /// <summary>Active teachers whose subscription has expired or is about to.</summary>
-    ExpiringWhileActive = 7
+    ExpiringWhileActive = 7,
+
+    /// <summary>
+    /// Paid recently. Ordered so the ones who have NOT started yet come first — a teacher who has
+    /// just handed over money and cannot get going is the most urgent call on the platform, and the
+    /// easiest refund request to avoid.
+    /// </summary>
+    NewlySubscribed = 8
 }
 
 /// <summary>Everything the grid can filter and sort by. All filters optional; they compose.</summary>
@@ -118,6 +132,13 @@ public sealed class AdminUsageFilter
     public DateTime? RegisteredFrom { get; set; }
     public DateTime? RegisteredToExclusive { get; set; }
 
+    /// <summary>
+    /// Only teachers whose CURRENT subscription started within this many days. Mirrors the existing
+    /// `subscribedWithinDays` on the teacher list, so "newly subscribed" means the same thing on
+    /// both screens. When set, it also forces newest-subscription-first ordering.
+    /// </summary>
+    public int? SubscribedWithinDays { get; set; }
+
     /// <summary>Column to order by, as a stable token the repo maps to an expression.</summary>
     public string SortBy { get; set; } = "LastActivity";
     public bool Descending { get; set; } = true;
@@ -135,11 +156,24 @@ public sealed class TeacherUsageRow
     public string? Username { get; set; }
     public string TeacherCode { get; set; } = null!;
     public string? PhoneNumber { get; set; }
+
+    /// <summary>Contact email. Carried for the CSV export — a rep needs a second way to reach
+    /// someone when the phone number is dead.</summary>
+    public string? Email { get; set; }
+
     public DateTime RegisteredAt { get; set; }
     public AccountStatus AccountStatus { get; set; }
 
     public SubscriptionStatus? SubscriptionStatus { get; set; }
+
+    /// <summary>When the CURRENT subscription started. Drives the "just subscribed" list — a
+    /// teacher who has paid and not yet started is the highest-priority onboarding call there is.</summary>
+    public DateTime? SubscriptionStartDate { get; set; }
+
     public DateTime? SubscriptionEndDate { get; set; }
+
+    /// <summary>Full / Managerial / ManagerialPlus on the current subscription.</summary>
+    public SubscriptionPlanType? PlanType { get; set; }
     public long? SalesRepId { get; set; }
     public string? SalesRepName { get; set; }
     public string? AcquisitionSource { get; set; }
