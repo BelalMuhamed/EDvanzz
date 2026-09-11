@@ -49,7 +49,42 @@ public class AdminInsightsController : ApiBaseController
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // ENDPOINT 1: OVERVIEW
+    // ENDPOINT 0: THE CALL LIST — the landing page
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   Answers the only question the landing page exists for: which teachers do I contact today,
+    //   and what do I say? One ranked list, each teacher exactly ONCE, under their single most
+    //   urgent reason, with the evidence in plain words and a concrete action.
+    //
+    // WHY IT REPLACED THE CARDS:
+    //   The overview showed nine insight lists side by side. Across 171 teachers they held 241
+    //   entries, the same teacher sat on several of them, nothing said which to work first, and no
+    //   card said what to DO. That is a report to study, not a list to work.
+    //
+    // ORDERING (the priority is what is at stake and how perishable, NOT bucket size):
+    //   1 paid & not started · 2 working but expiring · 3 teacher stopped while assistants carry on
+    //   4 went quiet · 5 students stranded · 6 ready but idle · 7 never started · 8 one module only
+    //   "Never started" is the biggest group and sits near the bottom on purpose — those accounts
+    //   have been stuck for weeks and will keep; a teacher who paid on Tuesday will not.
+    //
+    // SAMPLE: GET /api/admin/insights/call-list
+    //         GET /api/admin/insights/call-list?reason=PaidNotStarted&take=50
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("call-list")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<CallListDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetCallList(
+        [FromQuery] string? reason = null,
+        [FromQuery] int take = 0)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetCallListAsync(reason, take));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 1: PLATFORM NUMBERS (distributions + module adoption)
     // ══════════════════════════════════════════════════════════════════════════
     //
     // WHAT IT DOES:

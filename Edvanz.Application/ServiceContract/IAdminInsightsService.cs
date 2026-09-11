@@ -15,8 +15,19 @@ namespace Edvanz.Application.ServiceContract;
 public interface IAdminInsightsService
 {
     /// <summary>
-    /// The admin landing page in one call: headline counts with a real previous-period delta, the
-    /// three axis distributions, module adoption, and the named insight cards.
+    /// THE CALL LIST — the admin landing page. One ranked, DEDUPLICATED list answering the only
+    /// question that screen exists for: which teachers do I contact today, and what do I say?
+    ///
+    /// Each teacher appears exactly once, under their single most urgent reason, with the evidence
+    /// in plain words and a concrete action. Replaces the nine parallel insight cards, which held
+    /// 241 entries across 171 teachers with the same people on several lists, no ordering, and
+    /// nothing saying what to do.
+    /// </summary>
+    Task<Result<CallListDto>> GetCallListAsync(string? reasonKey, int take);
+
+    /// <summary>
+    /// The platform numbers — distributions and module adoption. Secondary by design: this is a
+    /// once-a-month question, and it used to crowd the daily one off its own page.
     /// </summary>
     Task<Result<AdminOverviewDto>> GetOverviewAsync();
 

@@ -2796,4 +2796,76 @@
   <data name="InsightNewlySubscribed" xml:space="preserve">
     <value>لسه دافعين. اللي لسه محصلش يظبط حسابه بييجي الأول — المدرس اللي دفع ومش عارف يبدأ ده الاسترداد اللي لسه تقدر تمنعه.</value>
   </data>
+  <data name="CallReasonPaidNotStarted" xml:space="preserve">
+    <value>دفع ومبدأش</value>
+  </data>
+  <data name="CallReasonExpiringWhileWorking" xml:space="preserve">
+    <value>شغال والاشتراك بيخلص</value>
+  </data>
+  <data name="CallReasonOwnerStopped" xml:space="preserve">
+    <value>المدرس وقف</value>
+  </data>
+  <data name="CallReasonWentQuiet" xml:space="preserve">
+    <value>سكت خالص</value>
+  </data>
+  <data name="CallReasonStudentsStranded" xml:space="preserve">
+    <value>طلبة مش في مجموعة</value>
+  </data>
+  <data name="CallReasonSetUpNotRunning" xml:space="preserve">
+    <value>جاهز ومش شغال</value>
+  </data>
+  <data name="CallReasonNeverStarted" xml:space="preserve">
+    <value>مبدأش خالص</value>
+  </data>
+  <data name="CallReasonOneModuleOnly" xml:space="preserve">
+    <value>بيستخدم حاجة واحدة</value>
+  </data>
+  <data name="CallWhyPaidNotStarted" xml:space="preserve">
+    <value>دفع من {0} يوم وعنده {1} طالب متسجلين.</value>
+  </data>
+  <data name="CallWhyExpiring" xml:space="preserve">
+    <value>اشتغل {0} يوم الشهر ده، والاشتراك {1}.</value>
+  </data>
+  <data name="CallWhyOwnerStopped" xml:space="preserve">
+    <value>{0} مساعدين لسه بيشتغلوا. المدرس آخر مرة ظهر {1}.</value>
+  </data>
+  <data name="CallWhyWentQuiet" xml:space="preserve">
+    <value>ساكت من {0} يوم، وعنده {1} طالب.</value>
+  </data>
+  <data name="CallWhyStudentsStranded" xml:space="preserve">
+    <value>{0} طالب، ولا واحد فيهم متحطّ في مجموعة.</value>
+  </data>
+  <data name="CallWhySetUpNotRunning" xml:space="preserve">
+    <value>{0} طالب وأيام حصص جاهزة، بس مفيش أي حاجة من {1} يوم.</value>
+  </data>
+  <data name="CallWhyNeverStarted" xml:space="preserve">
+    <value>مسجّل من {0} يوم وعمره ما ظبط أي حاجة.</value>
+  </data>
+  <data name="CallWhyOneModuleOnly" xml:space="preserve">
+    <value>بيستخدم {0} بس. الباقي مدفوع ومش متفتح.</value>
+  </data>
+  <data name="CallDoPaidNotStarted" xml:space="preserve">
+    <value>كلّمه النهاردة وظبّط معاه الطلبة وأول حصة.</value>
+  </data>
+  <data name="CallDoExpiring" xml:space="preserve">
+    <value>جدّد له قبل ما يقفل عليه — الراجل شغال فعلاً.</value>
+  </data>
+  <data name="CallDoOwnerStopped" xml:space="preserve">
+    <value>اسأل المدرس هو وقف ليه. الحساب ماشي من غيره.</value>
+  </data>
+  <data name="CallDoWentQuiet" xml:space="preserve">
+    <value>كلّمه دلوقتي وهو لسه قريب واسأله إيه اللي حصل.</value>
+  </data>
+  <data name="CallDoStudentsStranded" xml:space="preserve">
+    <value>حطّ طلبته في مجموعة — دلوقتي كلهم بيفتحوا تطبيق فاضي.</value>
+  </data>
+  <data name="CallDoSetUpNotRunning" xml:space="preserve">
+    <value>كل حاجة جاهزة. اسأله إيه اللي مأخّره يبدأ.</value>
+  </data>
+  <data name="CallDoNeverStarted" xml:space="preserve">
+    <value>احجز معاه مكالمة تظبيط أول مرة.</value>
+  </data>
+  <data name="CallDoOneModuleOnly" xml:space="preserve">
+    <value>وريه جزء تاني من النظام.</value>
+  </data>
 </root>

@@ -2808,4 +2808,76 @@
   <data name="InsightNewlySubscribed" xml:space="preserve">
     <value>Just paid. The ones not set up yet come first — a teacher who cannot get started after paying is the refund you can still prevent.</value>
   </data>
+  <data name="CallReasonPaidNotStarted" xml:space="preserve">
+    <value>Paid, not started</value>
+  </data>
+  <data name="CallReasonExpiringWhileWorking" xml:space="preserve">
+    <value>Working, expiring</value>
+  </data>
+  <data name="CallReasonOwnerStopped" xml:space="preserve">
+    <value>Teacher stopped</value>
+  </data>
+  <data name="CallReasonWentQuiet" xml:space="preserve">
+    <value>Went quiet</value>
+  </data>
+  <data name="CallReasonStudentsStranded" xml:space="preserve">
+    <value>Students stranded</value>
+  </data>
+  <data name="CallReasonSetUpNotRunning" xml:space="preserve">
+    <value>Ready, not running</value>
+  </data>
+  <data name="CallReasonNeverStarted" xml:space="preserve">
+    <value>Never started</value>
+  </data>
+  <data name="CallReasonOneModuleOnly" xml:space="preserve">
+    <value>Using one thing</value>
+  </data>
+  <data name="CallWhyPaidNotStarted" xml:space="preserve">
+    <value>Paid {0} days ago and has {1} students set up.</value>
+  </data>
+  <data name="CallWhyExpiring" xml:space="preserve">
+    <value>Worked {0} days this month, and the subscription is {1}.</value>
+  </data>
+  <data name="CallWhyOwnerStopped" xml:space="preserve">
+    <value>{0} assistants are still working. The teacher was last seen {1}.</value>
+  </data>
+  <data name="CallWhyWentQuiet" xml:space="preserve">
+    <value>Silent {0} days, with {1} students on the books.</value>
+  </data>
+  <data name="CallWhyStudentsStranded" xml:space="preserve">
+    <value>{0} students, and not one is assigned to a session.</value>
+  </data>
+  <data name="CallWhySetUpNotRunning" xml:space="preserve">
+    <value>{0} students and class days ready, but nothing for {1} days.</value>
+  </data>
+  <data name="CallWhyNeverStarted" xml:space="preserve">
+    <value>Registered {0} days ago and has never set anything up.</value>
+  </data>
+  <data name="CallWhyOneModuleOnly" xml:space="preserve">
+    <value>Only using {0}. Everything else is paid for and untouched.</value>
+  </data>
+  <data name="CallDoPaidNotStarted" xml:space="preserve">
+    <value>Walk them through adding students and their first class, today.</value>
+  </data>
+  <data name="CallDoExpiring" xml:space="preserve">
+    <value>Renew them before they lose access — they are actively using it.</value>
+  </data>
+  <data name="CallDoOwnerStopped" xml:space="preserve">
+    <value>Ask the teacher why they stopped. The account is running without them.</value>
+  </data>
+  <data name="CallDoWentQuiet" xml:space="preserve">
+    <value>Call while it is still fresh and ask what changed.</value>
+  </data>
+  <data name="CallDoStudentsStranded" xml:space="preserve">
+    <value>Put their students into a session — right now those students open an empty app.</value>
+  </data>
+  <data name="CallDoSetUpNotRunning" xml:space="preserve">
+    <value>Everything is ready. Ask what is stopping them from starting.</value>
+  </data>
+  <data name="CallDoNeverStarted" xml:space="preserve">
+    <value>Book a first-time setup call.</value>
+  </data>
+  <data name="CallDoOneModuleOnly" xml:space="preserve">
+    <value>Show them one more part of the product.</value>
+  </data>
 </root>

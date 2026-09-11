@@ -38,6 +38,162 @@ public class AdminInsightsService : IAdminInsightsService
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // THE CALL LIST — the landing page
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <inheritdoc />
+    public async Task<Result<CallListDto>> GetCallListAsync(string? reasonKey, int take)
+    {
+        var repo = _unitOfWork.AdminInsightsRepo;
+        DateOnly today = DateOnly.FromDateTime(_timeZone.ConvertUtcToLocal(DateTime.UtcNow));
+
+        CallReason? only = Enum.TryParse<CallReason>(reasonKey, true, out var parsed) ? parsed : null;
+
+        // Walk the reasons IN PRIORITY ORDER and keep the FIRST one that claims each teacher.
+        // This single dictionary is what makes the list a worklist: without it a teacher who paid,
+        // never started and has students stranded appears three times with no hint which matters.
+        var claimed = new Dictionary<long, CallListItemDto>();
+        var counts = new Dictionary<CallReason, int>();
+
+        foreach (var (reason, kind, severity) in CallReasonMap.Order)
+        {
+            if (only is not null && reason != only) continue;
+
+            // A generous slice per reason: the dedupe below decides what actually survives, so
+            // taking only `take` here would let a high-priority reason starve a lower one.
+            var (rows, _) = await repo.GetInsightTeachersAsync(kind, today, ReasonFetchLimit);
+
+            foreach (var r in rows)
+            {
+                if (claimed.ContainsKey(r.TeacherId)) continue;
+
+                // PaidNotStarted is the newly-subscribed query narrowed to the half that matters.
+                // A teacher who paid AND got going needs no call at all, and leaving them in was
+                // what made "just subscribed" 59 rows of mostly-nothing.
+                if (reason == CallReason.PaidNotStarted && r.HasRealData) continue;
+
+                claimed[r.TeacherId] = BuildItem(r, reason, severity);
+                counts[reason] = counts.GetValueOrDefault(reason) + 1;
+            }
+        }
+
+        var ordered = claimed.Values
+            .OrderBy(i => i.Priority)
+            // Within a reason, the biggest roster first — most students affected, most revenue at
+            // risk, and the call most worth the next ten minutes.
+            .ThenByDescending(i => i.StudentCount)
+            .ToList();
+
+        int totalNeeding = ordered.Count;
+        var page = ordered.Take(Math.Clamp(take <= 0 ? CallListDefaultTake : take, 1, 200)).ToList();
+
+        // Note counts only for what is actually shown, so the badge costs one query per screen.
+        var noteStats = await repo.GetNoteStatsAsync(page.Select(i => i.TeacherId).ToList());
+        foreach (var item in page)
+            if (noteStats.TryGetValue(item.TeacherId, out var n)) item.NoteCount = n.Count;
+
+        int totalTeachers = 0, live = 0;
+        var agg = await repo.GetOverviewAggregatesAsync(today);
+        totalTeachers = agg.TotalTeachers;
+        live = agg.Live;
+
+        var dto = new CallListDto
+        {
+            GeneratedAt = DateTime.UtcNow,
+            TotalNeedingContact = totalNeeding,
+            TotalTeachers = totalTeachers,
+            Live = live,
+            Items = page,
+            ReasonCounts = CallReasonMap.Order
+                .Where(o => counts.ContainsKey(o.Reason))
+                .Select(o => new BandCountDto
+                {
+                    Key = o.Reason.ToString(),
+                    Count = counts[o.Reason]
+                })
+                .ToList()
+        };
+
+        return Result<CallListDto>.Success(dto, _localizer);
+    }
+
+    /// <summary>How many rows to pull per reason before deduplication.</summary>
+    private const int ReasonFetchLimit = 200;
+
+    /// <summary>How many calls to put in front of someone at once. A list of 241 is not a day.</summary>
+    private const int CallListDefaultTake = 25;
+
+    /// <summary>
+    /// Turns a row into a call: the evidence in plain words, and the thing to do about it.
+    ///
+    /// Both strings are localized and carry the REAL numbers. "25 teachers went quiet" is a fact;
+    /// "Mohamed, silent 15 days, call while it is still fresh" is a job.
+    /// </summary>
+    private CallListItemDto BuildItem(TeacherUsageRow r, CallReason reason, string severity)
+    {
+        int daysSilent = r.LastActivityAt is null
+            ? 0
+            : Math.Max(0, (int)(DateTime.UtcNow - r.LastActivityAt.Value).TotalDays);
+        int daysRegistered = Math.Max(0, (int)(DateTime.UtcNow - r.RegisteredAt).TotalDays);
+        int daysSubscribed = r.SubscriptionStartDate is null
+            ? 0
+            : Math.Max(0, (int)(DateTime.UtcNow - r.SubscriptionStartDate.Value).TotalDays);
+
+        (string why, string action) = reason switch
+        {
+            CallReason.PaidNotStarted => (
+                _localizer["CallWhyPaidNotStarted", daysSubscribed, r.StudentCount],
+                _localizer["CallDoPaidNotStarted"]),
+
+            CallReason.ExpiringWhileWorking => (
+                _localizer["CallWhyExpiring", r.ActiveDays30, r.SubscriptionStatus?.ToString() ?? ""],
+                _localizer["CallDoExpiring"]),
+
+            CallReason.OwnerStopped => (
+                _localizer["CallWhyOwnerStopped", r.ActiveAssistantCount,
+                    r.LastTeacherActivityAt?.ToString("yyyy-MM-dd") ?? "-"],
+                _localizer["CallDoOwnerStopped"]),
+
+            CallReason.WentQuiet => (
+                _localizer["CallWhyWentQuiet", daysSilent, r.StudentCount],
+                _localizer["CallDoWentQuiet"]),
+
+            CallReason.StudentsStranded => (
+                _localizer["CallWhyStudentsStranded", r.StudentCount],
+                _localizer["CallDoStudentsStranded"]),
+
+            CallReason.SetUpNotRunning => (
+                _localizer["CallWhySetUpNotRunning", r.StudentCount, daysSilent],
+                _localizer["CallDoSetUpNotRunning"]),
+
+            CallReason.NeverStarted => (
+                _localizer["CallWhyNeverStarted", daysRegistered],
+                _localizer["CallDoNeverStarted"]),
+
+            _ => (
+                _localizer["CallWhyOneModuleOnly", ModuleNames(r.ModulesUsedMask).FirstOrDefault() ?? "-"],
+                _localizer["CallDoOneModuleOnly"])
+        };
+
+        return new CallListItemDto
+        {
+            TeacherId = r.TeacherId,
+            FullName = r.FullName,
+            TeacherCode = r.TeacherCode,
+            PhoneNumber = r.PhoneNumber,
+            SalesRepName = r.SalesRepName,
+            Priority = (int)reason,
+            ReasonKey = reason.ToString(),
+            ReasonLabel = _localizer[$"CallReason{reason}"],
+            Why = why,
+            Action = action,
+            Severity = severity,
+            LastActivityAt = r.LastActivityAt,
+            StudentCount = r.StudentCount
+        };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // OVERVIEW
     // ════════════════════════════════════════════════════════════════════════
 
