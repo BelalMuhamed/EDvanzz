@@ -1028,6 +1028,7 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             long teacherId, long videoAssetId, string? search,
             VideoAnalyticsSortBy sortBy, SortDirection sortDirection,
             VideoAnalyticsStatusFilter statusFilter,
+            long? sessionId, long? sessionGroupId,
             int page, int pageSize)
     {
         // Story F report. Build the resolved-students set in SQL via the
@@ -1067,20 +1068,25 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
                     .Where(x => x.VideoAssetId == videoAssetId)
                 on ts.Id equals an.TeacherStudentId into anGroup
             from an in anGroup.DefaultIfEmpty()
-            // sessionName (Track D1 §5): the student's active session
-            // assignment. A student has at most one active assignment at a
-            // time (BR-ATT precedent), so DefaultIfEmpty + FirstOrDefault-style
-            // left join is safe without a dedup step.
-            join ssa in _context.StudentSessionAssignments
-                    .Where(x => x.IsActive)
-                on ts.Id equals ssa.TeacherStudentId into ssaGroup
-            from ssa in ssaGroup.DefaultIfEmpty()
+            // The student's session, read from TeacherStudents.SessionId — the SAME
+            // column the audience resolves through (VideoAudienceQueries joins
+            // VideoScopes.SessionId to ts.SessionId). Keying the label, the
+            // sessionId filter and the by-session breakdown on that one column is
+            // what makes the three reconcile: a per-session count can never fail to
+            // sum to TotalStudentsInScope, and a chip always returns exactly the
+            // students its row counted. Previously the label came from the student's
+            // active StudentSessionAssignment, a denormalized snapshot that a later
+            // session rename never updated.
+            join sn in _context.Sessions.Where(x => x.TeacherId == teacherId)
+                on ts.SessionId equals sn.Id into snGroup
+            from sn in snGroup.DefaultIfEmpty()
             select new VideoAnalyticsReportRow
             {
                 TeacherStudentId = ts.Id,
                 StudentName = ts.StudentName,
                 StudentCode = ts.StudentCode,
-                SessionName = ssa != null ? ssa.SessionName : null,
+                SessionName = sn != null ? sn.SessionName : null,
+                SessionId = sn != null ? (long?)sn.Id : null,
                 HasOpened = an != null,
                 OpenCount = an != null ? an.OpenCount : 0,
                 TotalWatchSeconds = an != null ? an.TotalWatchSeconds : 0L,
@@ -1108,6 +1114,24 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             rowsQuery = rowsQuery.Where(r =>
                 EF.Functions.Like(DbSearch.ArabicNormalize(r.StudentName), pattern)
              || EF.Functions.Like(DbSearch.ArabicNormalize(r.StudentCode), pattern));
+        }
+
+        // Session / group narrowing. Keyed on the student's OWN active session so a
+        // chip matches its row in the by-session breakdown exactly. The narrower
+        // filter wins: passing both would otherwise let a session outside the group
+        // silently widen the result.
+        if (sessionId.HasValue)
+        {
+            rowsQuery = rowsQuery.Where(r => r.SessionId == sessionId.Value);
+        }
+        else if (sessionGroupId.HasValue)
+        {
+            // Resolved to member session ids rather than joining Sessions into the
+            // projection, so the common (unfiltered) request pays nothing for it.
+            var groupSessionIds = _context.Sessions
+                .Where(s => s.TeacherId == teacherId && s.SessionGroupId == sessionGroupId.Value)
+                .Select(s => (long?)s.Id);
+            rowsQuery = rowsQuery.Where(r => groupSessionIds.Contains(r.SessionId));
         }
 
         // G-ANL-4: server-side status filter. Same 90%-threshold definition
@@ -1189,6 +1213,82 @@ public class VideoAssetRepo : GenericRepo<VideoAsset, long>, IVideoAssetRepo
             UnseenCount = Math.Max(0, totalInScope - totalWatched),
             CompletedCount = completedCount,
         };
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<VideoSessionWatchRow>> GetAnalyticsBySessionAsync(
+        long teacherId, long videoAssetId)
+    {
+        int durationSeconds = await _context.VideoAssets
+            .Where(v => v.Id == videoAssetId && v.TeacherId == teacherId)
+            .Select(v => v.DurationSeconds)
+            .FirstOrDefaultAsync();
+
+        // Same resolved audience the header and the report rows use — the three can
+        // never disagree about who is in scope.
+        var resolvedStudentIds = GetResolvedStudentIdsForVideoQuery(teacherId, videoAssetId);
+
+        // A zero duration means "not known yet" — nobody can be Completed. Guarding it
+        // as a captured flag (rather than relying on a ternary to short-circuit inside
+        // SQL) keeps the divisor non-zero on every branch the server may evaluate.
+        bool durationKnown = durationSeconds > 0;
+        int safeDuration = durationKnown ? durationSeconds : 1;
+
+        // Flatten to scalars BEFORE grouping: EF translates a GroupBy over scalar keys
+        // with counted predicates, but not one whose elements are joined entities.
+        var flattened =
+            from sid in resolvedStudentIds
+            join ts in _context.TeacherStudents on sid equals ts.Id
+            join an in _context.VideoAnalytics
+                    .Where(x => x.VideoAssetId == videoAssetId)
+                on ts.Id equals an.TeacherStudentId into anGroup
+            from an in anGroup.DefaultIfEmpty()
+            join sn in _context.Sessions.Where(x => x.TeacherId == teacherId)
+                on ts.SessionId equals sn.Id into snGroup
+            from sn in snGroup.DefaultIfEmpty()
+            select new
+            {
+                SessionId = sn != null ? (long?)sn.Id : null,
+                SessionName = sn != null ? sn.SessionName : null,
+                SessionGroupId = sn != null ? sn.SessionGroupId : null,
+                SessionGroupName = sn != null && sn.SessionGroup != null
+                    ? sn.SessionGroup.GroupName
+                    : null,
+                HasOpened = an != null,
+                IsCompleted = durationKnown
+                    && an != null
+                    && an.TotalWatchSeconds * 100 / safeDuration
+                        >= VideoConstants.CompletionThresholdPercent,
+            };
+
+        // One grouped round trip — not one query per session.
+        var grouped = await flattened
+            .GroupBy(x => new
+            {
+                x.SessionId,
+                x.SessionName,
+                x.SessionGroupId,
+                x.SessionGroupName,
+            })
+            .Select(g => new VideoSessionWatchRow
+            {
+                SessionId = g.Key.SessionId,
+                SessionName = g.Key.SessionName,
+                SessionGroupId = g.Key.SessionGroupId,
+                SessionGroupName = g.Key.SessionGroupName,
+                StudentsInScope = g.Count(),
+                WatchedCount = g.Count(x => x.HasOpened),
+                CompletedCount = g.Count(x => x.IsCompleted),
+            })
+            .AsNoTracking()
+            .ToListAsync();
+
+        return grouped
+            // Named sessions first, alphabetically; the unassigned bucket sits last —
+            // it is a gap to fix, not a class to compare against.
+            .OrderBy(r => r.SessionId.HasValue ? 0 : 1)
+            .ThenBy(r => r.SessionName)
+            .ToList();
     }
 
     /// <inheritdoc />

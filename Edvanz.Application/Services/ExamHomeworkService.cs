@@ -860,6 +860,7 @@ public class ExamHomeworkService : IExamHomeworkService
                 request.GradeAbove,
                 request.GradeBelow,
                 request.BelowPassing,
+                gradeEntered: null,
                 request.Page, request.PageSize);
 
         var response = new PaginatedResponse<List<TrackingViewRowDto>>
@@ -1792,6 +1793,7 @@ public class ExamHomeworkService : IExamHomeworkService
                 gradeAboveThreshold: null,
                 gradeBelowThreshold: null,
                 belowPassingGrade: true,
+                gradeEntered: null,
                 page: 1, pageSize: 1);
         return totalCount;
     }

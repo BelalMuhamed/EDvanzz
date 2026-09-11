@@ -461,6 +461,12 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
     /// (G-ANL-4). "Completed" uses the same
     /// <c>VideoConstants.CompletionThresholdPercent</c> threshold as
     /// <see cref="GetAnalyticsAggregatesAsync"/>'s <c>CompletedCount</c>.</param>
+    /// <param name="sessionId">Optional: only students whose ACTIVE session
+    /// assignment is this session. Keyed on the student's own session, which is
+    /// what the by-session breakdown counts, so a chip and its row always agree.</param>
+    /// <param name="sessionGroupId">Optional: only students whose active session
+    /// belongs to this group. Ignored when <paramref name="sessionId"/> is set —
+    /// the narrower filter wins.</param>
     /// <param name="page">1-based.</param>
     /// <param name="pageSize">Clamped by caller.</param>
     Task<(IReadOnlyList<VideoAnalyticsReportRow> Items, int TotalCount)>
@@ -471,8 +477,27 @@ public interface IVideoAssetRepo : IGenericRepo<VideoAsset, long>
             VideoAnalyticsSortBy sortBy,
             SortDirection sortDirection,
             VideoAnalyticsStatusFilter statusFilter,
+            long? sessionId,
+            long? sessionGroupId,
             int page,
             int pageSize);
+
+    /// <summary>
+    /// The video's audience broken down by the students' own sessions — one row per
+    /// session, each with in-scope / watched / completed counts. Backs
+    /// <c>GET /api/videos/{id}/analytics/by-session</c>.
+    ///
+    /// Grouping is by the student's ACTIVE <c>StudentSessionAssignment</c>, NOT by the
+    /// video's scope rows: a session reachable both directly and through a scoped group
+    /// would otherwise appear twice and the rows would stop summing to
+    /// <c>TotalStudentsInScope</c>. Students with no active assignment collapse into one
+    /// row with a null SessionId. Uses the same resolved-audience helper and the same
+    /// completion threshold as <see cref="GetAnalyticsAggregatesAsync"/>, so the
+    /// breakdown always reconciles with the header.
+    /// </summary>
+    Task<IReadOnlyList<VideoSessionWatchRow>> GetAnalyticsBySessionAsync(
+        long teacherId,
+        long videoAssetId);
 
     /// <summary>
     /// Top-of-report aggregates: total students in scope, total students who

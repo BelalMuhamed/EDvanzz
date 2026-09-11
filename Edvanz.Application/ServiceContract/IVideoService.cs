@@ -162,6 +162,15 @@ public interface IVideoService
     Task<Result<VideoAnalyticsResponse>> GetAnalyticsAsync(
         long teacherId, long videoAssetId, VideoAnalyticsRequest request);
 
+    /// <summary>
+    /// The same audience, sliced by class: one row per session with in-scope /
+    /// watched / unseen / completed counts, so a teacher can see WHICH group is
+    /// behind instead of only a single total. Rows are keyed by the student's own
+    /// active session and therefore sum exactly to <c>TotalStudentsInScope</c>.
+    /// </summary>
+    Task<Result<VideoSessionWatchBreakdownDto>> GetAnalyticsBySessionAsync(
+        long teacherId, long videoAssetId);
+
     // ══════════════════════════════════════════════════════════════════════
     // STUDENT READ + WATCH FLOWS
     // ══════════════════════════════════════════════════════════════════════

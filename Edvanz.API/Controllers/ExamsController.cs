@@ -125,7 +125,10 @@ public class ExamsController : ModuleSixApiBaseController
 
     // ══════════════════════════════════════════════════════════════════════════
     // OPENED EXAM — one session's roster, paged (drill-in / large sessions)
-    // GET /api/exams/{examId}/sessions/{sessionId}?page=&pageSize=&search=
+    // GET /api/exams/{examId}/sessions/{sessionId}?page=&pageSize=&search=&graded=
+    // `graded` (optional): true = only students who already have a grade, false =
+    // only those still waiting for one, omitted = both. Server-side on purpose —
+    // the grade screen's chips must narrow the page, not just what is loaded.
     // ══════════════════════════════════════════════════════════════════════════
     [HttpGet("{examId:long}/sessions/{sessionId:long}")]
     [ModulePermission("Exams And Homework", "View")]
@@ -136,13 +139,14 @@ public class ExamsController : ModuleSixApiBaseController
         [FromRoute] long sessionId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
-        [FromQuery] string? search = null)
+        [FromQuery] string? search = null,
+        [FromQuery] bool? graded = null)
     {
         long? teacherId = await ResolveTeacherIdAsync();
         if (teacherId is null) return TeacherNotResolved();
 
         return ToResponse(await _exams.GetExamSessionRosterAsync(
-            teacherId.Value, examId, sessionId, page, pageSize, search));
+            teacherId.Value, examId, sessionId, page, pageSize, search, graded));
     }
 
     // ══════════════════════════════════════════════════════════════════════════

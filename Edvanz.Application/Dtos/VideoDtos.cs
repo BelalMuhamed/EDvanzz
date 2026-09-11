@@ -1056,6 +1056,20 @@ public sealed class VideoAnalyticsRequest
     /// </summary>
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public VideoAnalyticsStatusFilter StatusFilter { get; set; } = VideoAnalyticsStatusFilter.All;
+
+    /// <summary>
+    /// Optional: only students whose ACTIVE session assignment is this session.
+    /// Same key the by-session breakdown groups on, so a chip and its row always
+    /// report the same number.
+    /// </summary>
+    public long? SessionId { get; set; }
+
+    /// <summary>
+    /// Optional: only students whose active session belongs to this group.
+    /// Ignored when <see cref="SessionId"/> is also supplied — the narrower
+    /// filter wins rather than silently widening the result.
+    /// </summary>
+    public long? SessionGroupId { get; set; }
 }
 
 /// <summary>
@@ -1099,6 +1113,12 @@ public sealed class VideoAnalyticsRowDto
     /// <summary>The student's current session name, or null if unassigned.</summary>
     public string? SessionName { get; set; }
 
+    /// <summary>
+    /// The id behind <see cref="SessionName"/>, so the client can key a filter or a
+    /// jump-to-session on it instead of matching display text. Null if unassigned.
+    /// </summary>
+    public long? SessionId { get; set; }
+
     public bool HasOpened { get; set; }
     public int OpenCount { get; set; }
     public long TotalWatchSeconds { get; set; }
@@ -1111,6 +1131,57 @@ public sealed class VideoAnalyticsRowDto
 
     /// <summary>Uncapped; values &gt; 100 indicate rewatching.</summary>
     public int? RawWatchPct { get; set; }
+}
+
+/// <summary>
+/// "How many of each class watched this?" — the video's audience sliced by the
+/// students' own sessions. Backs <c>GET /api/videos/{id}/analytics/by-session</c>.
+///
+/// <see cref="Rows"/> sums exactly to <see cref="TotalStudentsInScope"/>: rows are keyed
+/// by the student's active session, so a session reachable both directly and through a
+/// scoped group is counted once, and the totals are SUMMED FROM the rows rather than
+/// counted separately — the header can never disagree with the list under it.
+///
+/// These totals may therefore differ from the video detail card's seen/unseen counts on
+/// legacy data carrying a per-student <c>VideoScope</c> row whose student no longer
+/// exists: that row is counted by the audience query (which does not join
+/// <c>TeacherStudents</c>) but has no student to appear in any class row.
+/// </summary>
+public sealed class VideoSessionWatchBreakdownDto
+{
+    public long VideoAssetId { get; set; }
+    public string Title { get; set; } = null!;
+
+    public int TotalStudentsInScope { get; set; }
+    public int TotalStudentsWatched { get; set; }
+    public int UnseenCount { get; set; }
+    public int CompletedCount { get; set; }
+
+    public List<VideoSessionWatchRowDto> Rows { get; set; } = new();
+}
+
+/// <summary>One session's row in <see cref="VideoSessionWatchBreakdownDto"/>.</summary>
+public sealed class VideoSessionWatchRowDto
+{
+    /// <summary>Null for the single "not assigned to a session" bucket, which sorts last.</summary>
+    public long? SessionId { get; set; }
+    public string? SessionName { get; set; }
+
+    /// <summary>The session's group, shown as the row's subtitle. Null when ungrouped.</summary>
+    public long? SessionGroupId { get; set; }
+    public string? SessionGroupName { get; set; }
+
+    public int StudentsInScope { get; set; }
+    public int WatchedCount { get; set; }
+
+    /// <summary>= <see cref="StudentsInScope"/> - <see cref="WatchedCount"/>.</summary>
+    public int UnseenCount { get; set; }
+
+    /// <summary>Watchers meeting <c>VideoConstants.CompletionThresholdPercent</c>.</summary>
+    public int CompletedCount { get; set; }
+
+    /// <summary>0–100. Share of the session that has opened the video; 0 when the session is empty.</summary>
+    public int WatchedPct { get; set; }
 }
 /// <summary>
 /// One resolved scope target (a session or a session-group) with its display name

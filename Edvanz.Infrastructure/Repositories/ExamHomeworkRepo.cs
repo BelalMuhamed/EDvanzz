@@ -458,6 +458,7 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
         decimal? gradeAboveThreshold,
         decimal? gradeBelowThreshold,
         bool? belowPassingGrade,
+        bool? gradeEntered,
         int page, int pageSize)
     {
         // Look up the passing-threshold snapshot once so the IsBelowPassing flag
@@ -499,6 +500,18 @@ public class ExamHomeworkRepo : GenericRepo<StudentAssignmentObligation, long>, 
         // REQ-EXH-031 filter 4 — grades below a specified value (exam only).
         if (gradeBelowThreshold.HasValue)
             query = query.Where(o => o.GradeValue.HasValue && o.GradeValue.Value < gradeBelowThreshold.Value);
+
+        // Grade-entry chips: has a grade / still waiting for one. Applied before the
+        // count so the chip's number and its page always describe the same set.
+        //
+        // The predicate is deliberately the SAME one ExamService.ComputeStats uses for
+        // GradedCount (flag AND value), which is the number the chip shows: a row
+        // flagged graded but carrying no value would otherwise be counted as graded
+        // and listed as not graded, and the two would disagree by one forever.
+        if (gradeEntered == true)
+            query = query.Where(o => o.IsGradeEntered && o.GradeValue.HasValue);
+        else if (gradeEntered == false)
+            query = query.Where(o => !o.IsGradeEntered || !o.GradeValue.HasValue);
 
         // REQ-EXH-031 filter 5 — students who scored below the passing threshold.
         if (belowPassingGrade == true && passingThreshold.HasValue)

@@ -1094,6 +1094,7 @@ public sealed class VideoService : IVideoService
             .GetAnalyticsRowsForTeacherAsync(
                 teacherId, videoAssetId, request.Search,
                 request.SortBy, request.SortDirection, request.StatusFilter,
+                request.SessionId, request.SessionGroupId,
                 request.Page, request.PageSize);
 
         var aggregates = await _unitOfWork.VideoAssetsRepo
@@ -1105,6 +1106,7 @@ public sealed class VideoService : IVideoService
             StudentName = r.StudentName,
             StudentCode = r.StudentCode,
             SessionName = r.SessionName,
+            SessionId = r.SessionId,
             HasOpened = r.HasOpened,
             OpenCount = r.OpenCount,
             TotalWatchSeconds = r.TotalWatchSeconds,
@@ -1132,6 +1134,59 @@ public sealed class VideoService : IVideoService
         };
 
         return Result<VideoAnalyticsResponse>.Success(response, _localizer);
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<VideoSessionWatchBreakdownDto>> GetAnalyticsBySessionAsync(
+        long teacherId, long videoAssetId)
+    {
+        var video = await _unitOfWork.VideoAssetsRepo
+            .GetVideoByIdAndTeacherAsync(videoAssetId, teacherId);
+        if (video is null)
+            return Result<VideoSessionWatchBreakdownDto>.Failure(
+                _localizer, VideoConstants.Messages.VideoNotFound, HttpStatusCode.NotFound);
+
+        var rows = await _unitOfWork.VideoAssetsRepo
+            .GetAnalyticsBySessionAsync(teacherId, videoAssetId);
+
+        // Totals are SUMMED FROM THE ROWS, not read from GetAnalyticsAggregatesAsync.
+        // That method counts the resolved audience directly, while the rows (like the
+        // report rows) inner-join TeacherStudents — and the legacy per-student scope
+        // branch of the audience query never joins it, so an orphaned VideoScope row
+        // would be counted in the header and absent from every row beneath it. This
+        // screen's whole claim is "here is that total, split by class", so a header it
+        // cannot reconcile with is worse than one that differs from another screen by
+        // a legacy row. Also saves three round trips.
+        int totalInScope = rows.Sum(r => r.StudentsInScope);
+        int totalWatched = rows.Sum(r => r.WatchedCount);
+
+        var response = new VideoSessionWatchBreakdownDto
+        {
+            VideoAssetId = video.Id,
+            Title = video.Title,
+            TotalStudentsInScope = totalInScope,
+            TotalStudentsWatched = totalWatched,
+            UnseenCount = Math.Max(0, totalInScope - totalWatched),
+            CompletedCount = rows.Sum(r => r.CompletedCount),
+            Rows = rows.Select(r => new VideoSessionWatchRowDto
+            {
+                SessionId = r.SessionId,
+                SessionName = r.SessionName,
+                SessionGroupId = r.SessionGroupId,
+                SessionGroupName = r.SessionGroupName,
+                StudentsInScope = r.StudentsInScope,
+                WatchedCount = r.WatchedCount,
+                UnseenCount = Math.Max(0, r.StudentsInScope - r.WatchedCount),
+                CompletedCount = r.CompletedCount,
+                // Computed here rather than on the client so every surface rounds the
+                // same way; an empty session reads 0 instead of dividing by zero.
+                WatchedPct = r.StudentsInScope == 0
+                    ? 0
+                    : (int)Math.Round(r.WatchedCount * 100d / r.StudentsInScope),
+            }).ToList(),
+        };
+
+        return Result<VideoSessionWatchBreakdownDto>.Success(response, _localizer);
     }
 
     // ══════════════════════════════════════════════════════════════════════

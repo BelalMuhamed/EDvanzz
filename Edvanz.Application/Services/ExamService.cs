@@ -593,7 +593,8 @@ public class ExamService : IExamService
 
     /// <inheritdoc />
     public async Task<Result<ExamSessionRosterDto>> GetExamSessionRosterAsync(
-        long teacherId, long examId, long sessionId, int page, int pageSize, string? search)
+        long teacherId, long examId, long sessionId, int page, int pageSize, string? search,
+        bool? graded)
     {
         // Exam-surface guard (mirror GetExamViewAsync): a Homework template must 404 here so this
         // exams-only endpoint can never surface homework obligations.
@@ -616,6 +617,10 @@ public class ExamService : IExamService
             teacherId, occ.OccurrenceId, search,
             statusFilter: null, missingEntries: null,
             gradeAboveThreshold: null, gradeBelowThreshold: null, belowPassingGrade: null,
+            // All / Graded / Not graded must narrow the SERVER page — the grade screen
+            // pages 30 at a time, so filtering what happens to be loaded would hide
+            // every student past the first page behind a chip that claims a total.
+            gradeEntered: graded,
             page: safePage, pageSize: safeSize);
 
         var students = rows.Select(r => new ExamStudentRowDto

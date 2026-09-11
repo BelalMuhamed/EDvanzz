@@ -273,6 +273,13 @@ public sealed class VideoAnalyticsReportRow
     /// </summary>
     public string? SessionName { get; set; }
 
+    /// <summary>
+    /// The id behind <see cref="SessionName"/>. A name alone cannot be filtered
+    /// or grouped on (two sessions may share one), so the by-session breakdown
+    /// and the session filter both key off this. Null when unassigned.
+    /// </summary>
+    public long? SessionId { get; set; }
+
     public bool HasOpened { get; set; }
     public int OpenCount { get; set; }
     public long TotalWatchSeconds { get; set; }
@@ -308,6 +315,27 @@ public sealed class VideoAnalyticsAggregates
     /// Students whose <c>EstimatedCompletionPct</c> meets
     /// <c>VideoConstants.CompletionThresholdPercent</c> (G-ANL-1).
     /// </summary>
+    public int CompletedCount { get; set; }
+}
+
+/// <summary>
+/// One session's slice of a video's audience — "how many of THIS class watched it".
+/// Keyed by the student's own active session, so a session covered both directly and
+/// through a scoped group yields ONE row and the rows always sum to the video's
+/// audience count. Unassigned students (no active assignment) collapse into a single
+/// row with <see cref="SessionId"/> null.
+/// </summary>
+public sealed class VideoSessionWatchRow
+{
+    public long? SessionId { get; set; }
+    public string? SessionName { get; set; }
+
+    /// <summary>The group the session belongs to, for the row's subtitle. Null when ungrouped.</summary>
+    public long? SessionGroupId { get; set; }
+    public string? SessionGroupName { get; set; }
+
+    public int StudentsInScope { get; set; }
+    public int WatchedCount { get; set; }
     public int CompletedCount { get; set; }
 }
 

@@ -339,6 +339,34 @@ public sealed class VideosController : ModuleSixApiBaseController
         var result = await _service.GetAnalyticsAsync(teacherId.Value, videoAssetId, request);
         return ToResponse(result);
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // WATCH BREAKDOWN BY SESSION
+    // GET /api/videos/{videoAssetId}/analytics/by-session
+    // ══════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   Answers "which class is behind on this video?" — one row per session
+    //   with in-scope / watched / unseen / completed counts, plus the same
+    //   totals the analytics header carries. Rows are keyed by the student's
+    //   own active session, so they sum exactly to TotalStudentsInScope even
+    //   when a session is reachable both directly and through a scoped group.
+    //   Not paginated: a teacher has tens of sessions, not thousands.
+    //
+    // ══════════════════════════════════════════════════════════════════════
+    [HttpGet("{videoAssetId:long}/analytics/by-session")]
+    [ModulePermission(VideoConstants.ModuleName, VideoConstants.PermissionView)]
+    [ProducesResponseType(typeof(Edvanz.Application.Dtos.Result<Edvanz.Application.Dtos.VideoContentManagement.VideoSessionWatchBreakdownDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAnalyticsBySession([FromRoute] long videoAssetId)
+    {
+        long? teacherId = await ResolveTeacherIdAsync();
+        if (teacherId is null) return TeacherNotResolved();
+
+        return ToResponse(await _service.GetAnalyticsBySessionAsync(teacherId.Value, videoAssetId));
+    }
    
     // ══════════════════════════════════════════════════════════════════════
     // REPLACE VIDEO PHOTO (cover image; formerly "thumbnail") — attach-new → detach-old

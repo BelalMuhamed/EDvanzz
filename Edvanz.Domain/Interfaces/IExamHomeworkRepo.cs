@@ -231,6 +231,14 @@ public interface IExamHomeworkRepo : IGenericRepo<StudentAssignmentObligation, l
     /// supports virtual scrolling at 50,000 students.
     /// REQ-EXH-NFR-001: Renders in &lt; 2 seconds.
     ///
+    /// <paramref name="gradeEntered"/>: true = only students who already carry a grade,
+    /// false = only students still waiting for one, null = both. Distinct from
+    /// <paramref name="missingEntries"/>, which is about attendance/completion status —
+    /// an Attended student with no grade is "not graded" but not a missing entry. Backs
+    /// the grade screen's All / Graded / Not graded chips, which must narrow the SERVER
+    /// page: filtering the loaded page client-side would silently hide every student
+    /// past page 1.
+    ///
     /// Service layer wraps the result in PaginatedResponse&lt;TrackingRow&gt;.
     /// </summary>
     Task<(IReadOnlyList<TrackingViewRow> Items, int TotalCount)> GetTrackingViewPagedAsync(
@@ -241,6 +249,7 @@ public interface IExamHomeworkRepo : IGenericRepo<StudentAssignmentObligation, l
         decimal? gradeAboveThreshold,
         decimal? gradeBelowThreshold,
         bool? belowPassingGrade,
+        bool? gradeEntered,
         int page, int pageSize);
 
     /// <summary>

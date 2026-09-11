@@ -50,9 +50,13 @@ public interface IExamService
 
     /// <summary>
     /// Paged student roster for a single session within an exam (drill-in / large-session view).
+    /// <paramref name="graded"/> narrows to students who already have a grade (true) or are
+    /// still waiting for one (false); null returns both. It filters the SERVER page so the
+    /// grade screen's chips stay honest past page 1.
     /// </summary>
     Task<Result<ExamSessionRosterDto>> GetExamSessionRosterAsync(
-        long teacherId, long examId, long sessionId, int page, int pageSize, string? search);
+        long teacherId, long examId, long sessionId, int page, int pageSize, string? search,
+        bool? graded);
 
     /// <summary>
     /// Saves a batch of distinct per-student grades in one transaction. Enforces 0 ≤ grade ≤ the
