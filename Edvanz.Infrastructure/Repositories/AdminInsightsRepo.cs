@@ -82,6 +82,7 @@ public class AdminInsightsRepo : IAdminInsightsRepo
                    TotalWrites30 = sn == null ? 0 : sn.TotalWrites30,
                    ModulesUsedMask = sn == null ? 0 : sn.ModulesUsedMask,
                    ModulesUsedAllTimeMask = sn == null ? 0 : sn.ModulesUsedAllTimeMask,
+                   EntitledModulesMask = sn == null ? 0 : sn.EntitledModulesMask,
                    FirstActivityAt = sn == null ? null : sn.FirstActivityAt,
                    LastActivityAt = sn == null ? null : sn.LastActivityAt,
                    LastTeacherActivityAt = sn == null ? null : sn.LastTeacherActivityAt,
@@ -362,6 +363,14 @@ public class AdminInsightsRepo : IAdminInsightsRepo
                 .OrderBy(r => r.HasRealData)
                 .ThenByDescending(r => r.SubscriptionStartDate),
 
+            // Entitled to something they have NEVER opened. Restricted to teachers who are actually
+            // running (HasRealData) — telling someone who never set up that they are ignoring videos
+            // is noise; they have a bigger problem, and it is already its own reason above.
+            AdminInsightKind.UnusedEntitlements => query
+                .Where(r => r.HasRealData
+                         && (r.EntitledModulesMask & ~r.ModulesUsedAllTimeMask) != 0)
+                .OrderByDescending(r => r.StudentCount),
+
             _ => query.OrderByDescending(r => r.LastActivityAt)
         };
 
@@ -448,6 +457,33 @@ public class AdminInsightsRepo : IAdminInsightsRepo
         if (teacher is not null) result.Add(teacher);
         result.AddRange(assistants.OrderByDescending(a => a.IsActive).ThenBy(a => a.FullName));
         return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<TeacherAdoptionRow>> GetAdoptionRowsAsync(
+        bool subscribedOnly, CancellationToken ct = default)
+    {
+        var query = BuildRowQuery(DateTime.UtcNow);
+
+        // "Subscribed" means a live subscription — Active or ExpiringSoon. An expired teacher is
+        // not a paying customer and counting them drags every platform figure down.
+        if (subscribedOnly)
+            query = query.Where(r =>
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.Active ||
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.ExpiringSoon);
+
+        return await query
+            .Select(r => new TeacherAdoptionRow(
+                r.TeacherId,
+                r.PlanType,
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.Active ||
+                r.SubscriptionStatus == Domain.Enums.SubscriptionStatus.ExpiringSoon,
+                r.ActiveDays30,
+                r.HasRealData,
+                r.EntitledModulesMask,
+                r.ModulesUsedMask,
+                r.ModulesUsedAllTimeMask))
+            .ToListAsync(ct);
     }
 
     /// <inheritdoc />

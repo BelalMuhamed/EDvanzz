@@ -57,6 +57,9 @@ public class TeacherUsageDay : BaseEntity
     /// <summary>Parent-portal follow-up grants.</summary>
     public int ParentPortalWrites { get; set; }
 
+    /// <summary>One-off payment events created.</summary>
+    public int EventPaymentWrites { get; set; }
+
     // ── Rollup helpers ─────────────────────────────────────────────────────────
 
     /// <summary>

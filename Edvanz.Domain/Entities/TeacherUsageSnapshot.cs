@@ -53,6 +53,19 @@ public class TeacherUsageSnapshot : BaseEntity
     /// <summary>How much of the product is in use. See <see cref="UsageDepth"/>.</summary>
     public UsageDepth Depth { get; set; }
 
+    /// <summary>
+    /// Modules this teacher is ENTITLED to — their grant rows plus the plan-derived parent portal.
+    /// See <c>UsageModuleEntitlement</c>.
+    ///
+    /// This is what turns absolute usage into the commercial question. "Not using videos" only
+    /// matters if they have videos; a Managerial teacher without student accounts is not a gap.
+    /// The never-used set (entitled AND never touched) is the reason to pick up the phone.
+    ///
+    /// Refreshed by the nightly rollup AND immediately on any grant/revoke, so a module granted
+    /// this morning does not read as an unused entitlement until tomorrow.
+    /// </summary>
+    public int EntitledModulesMask { get; set; }
+
     // ── Axis 3: operator mix ───────────────────────────────────────────────────
 
     /// <summary>Who is working the account. See <see cref="OperatorMix"/>.</summary>

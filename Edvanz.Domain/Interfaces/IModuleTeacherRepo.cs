@@ -29,6 +29,15 @@ namespace Edvanz.Domain.Interfaces
         Task<IReadOnlyList<long>> GetTutorModuleIdsAsync(long teacherId);
 
         /// <summary>
+        /// Granted module NAMES for MANY teachers in one query — the entitlement half of the admin
+        /// usage model. Every other read here is single-teacher, which would be a few hundred round
+        /// trips across a nightly rollup. Index-served by the composite PK (TutorId, ModuleId).
+        /// Teachers with no grants are absent from the dictionary rather than present-and-empty.
+        /// </summary>
+        Task<IReadOnlyDictionary<long, List<string>>> GetModuleNamesByTeacherIdsAsync(
+            IReadOnlyCollection<long> teacherIds);
+
+        /// <summary>
         /// Grants a module to a tutor by inserting a row into <c>TutorModuleAccess</c>.
         /// Idempotent: if the (TutorId, ModuleId) pair already exists, returns false
         /// without raising — the caller (service layer) treats false as "no state

@@ -206,6 +206,23 @@ public class TeacherUsageRepo : ITeacherUsageRepo
             .ToList();
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<UsageHourBucket>> GetEventPaymentBucketsAsync(
+        long teacherId, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default)
+    {
+        var rows = await _context.PaymentEvents
+            .AsNoTracking()
+            .Where(e => e.TeacherId == teacherId && !e.IsDeleted
+                     && e.CreateAt >= fromUtc && e.CreateAt < toUtc)
+            .GroupBy(e => new { Day = e.CreateAt.Date, e.CreateAt.Hour })
+            .Select(g => new { g.Key.Day, g.Key.Hour, Count = g.Count() })
+            .ToListAsync(ct);
+
+        return rows
+            .Select(r => new UsageHourBucket(DateTime.SpecifyKind(r.Day.AddHours(r.Hour), DateTimeKind.Utc), r.Count))
+            .ToList();
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // POINT-IN-TIME FACTS
     // ════════════════════════════════════════════════════════════════════════

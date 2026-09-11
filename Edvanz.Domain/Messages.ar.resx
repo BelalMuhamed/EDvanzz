@@ -2889,4 +2889,76 @@
   <data name="CountAssistantMany" xml:space="preserve">
     <value>{0} مساعدين</value>
   </data>
+  <data name="CallReasonSubscribedNotStarted" xml:space="preserve">
+    <value>مشترك ومظبطش حاجة</value>
+  </data>
+  <data name="CallReasonSubscriptionEnding" xml:space="preserve">
+    <value>شغال والاشتراك قرب يخلص</value>
+  </data>
+  <data name="CallReasonOnlyAssistantsWorking" xml:space="preserve">
+    <value>المساعدين بس اللي شغالين</value>
+  </data>
+  <data name="CallReasonStoppedUsingIt" xml:space="preserve">
+    <value>بطّل يستخدمه</value>
+  </data>
+  <data name="CallReasonStudentsSeeNothing" xml:space="preserve">
+    <value>الطلبة مش شايفين حاجة</value>
+  </data>
+  <data name="CallReasonSetUpNeverTaught" xml:space="preserve">
+    <value>متظبط ومدّاش حصة</value>
+  </data>
+  <data name="CallReasonPayingForUnusedFeatures" xml:space="preserve">
+    <value>بيدفع في حاجات مش بيستخدمها</value>
+  </data>
+  <data name="CallReasonNeverSetUp" xml:space="preserve">
+    <value>مظبطش حاجة خالص</value>
+  </data>
+  <data name="CallWhySubscribedNotStarted" xml:space="preserve">
+    <value>اشترك {0}. ضاف {1}، ولسه مفيش حصص متحددة.</value>
+  </data>
+  <data name="CallWhySubscriptionEnding" xml:space="preserve">
+    <value>دّى حصص في {0} يوم الشهر ده. الاشتراك بيخلص {1}.</value>
+  </data>
+  <data name="CallWhyOnlyAssistantsWorking" xml:space="preserve">
+    <value>{0} لسه بيشتغلوا. المدرس مفتحش التطبيق من {1}.</value>
+  </data>
+  <data name="CallWhyStoppedUsingIt" xml:space="preserve">
+    <value>مفيش أي حاجة من {0} يوم، وعنده {1}.</value>
+  </data>
+  <data name="CallWhyStudentsSeeNothing" xml:space="preserve">
+    <value>{0}، ولا واحد فيهم في مجموعة.</value>
+  </data>
+  <data name="CallWhySetUpNeverTaught" xml:space="preserve">
+    <value>{0} وأيام الحصص جاهزة، بس مفيش أي حاجة من {1} يوم.</value>
+  </data>
+  <data name="CallWhyPayingForUnusedFeatures" xml:space="preserve">
+    <value>بيدفع في {0} خاصية عمره ما فتحهم: {1}.</value>
+  </data>
+  <data name="CallWhyNeverSetUp" xml:space="preserve">
+    <value>اشترك {0} وعمره ما ظبط أي حاجة.</value>
+  </data>
+  <data name="CallDoSubscribedNotStarted" xml:space="preserve">
+    <value>كلّمه النهاردة وظبّط معاه الطلبة وأول حصة.</value>
+  </data>
+  <data name="CallDoSubscriptionEnding" xml:space="preserve">
+    <value>جدّد له قبل ما يقفل عليه. الراجل بيدّي حصص فعلاً.</value>
+  </data>
+  <data name="CallDoOnlyAssistantsWorking" xml:space="preserve">
+    <value>اسأل المدرس وقف ليه. الحساب ماشي من غيره.</value>
+  </data>
+  <data name="CallDoStoppedUsingIt" xml:space="preserve">
+    <value>كلّمه دلوقتي وهو لسه قريب واسأله إيه اللي حصل.</value>
+  </data>
+  <data name="CallDoStudentsSeeNothing" xml:space="preserve">
+    <value>حطّ طلبته في مجموعة. من غير كده كلهم بيفتحوا تطبيق فاضي.</value>
+  </data>
+  <data name="CallDoSetUpNeverTaught" xml:space="preserve">
+    <value>كل حاجة جاهزة. اسأله إيه اللي مأخّره يبدأ.</value>
+  </data>
+  <data name="CallDoPayingForUnusedFeatures" xml:space="preserve">
+    <value>وريه واحدة من الخصائص دي في المكالمة.</value>
+  </data>
+  <data name="CallDoNeverSetUp" xml:space="preserve">
+    <value>احجز معاه مكالمة تظبيط وحدّدوا أول حصة.</value>
+  </data>
 </root>

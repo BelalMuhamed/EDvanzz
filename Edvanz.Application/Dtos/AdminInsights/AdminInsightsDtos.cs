@@ -67,6 +67,24 @@ public class TeacherUsageListItemDto
     /// "never adopted it" from "gave up on it".</summary>
     public IReadOnlyList<string> ModulesAllTime { get; set; } = Array.Empty<string>();
 
+    // ── Entitlement vs usage — "is he using what he pays for?" ─────────────────
+
+    /// <summary>Features this teacher is entitled to: their module grants plus the plan-derived
+    /// parent portal.</summary>
+    public IReadOnlyList<string> FeaturesEntitled { get; set; } = Array.Empty<string>();
+
+    /// <summary>Entitled and NEVER opened. The gap, and the reason to call.</summary>
+    public IReadOnlyList<string> FeaturesNeverUsed { get; set; } = Array.Empty<string>();
+
+    /// <summary>Used once and then dropped — a different conversation from never adopting it.</summary>
+    public IReadOnlyList<string> FeaturesLapsed { get; set; } = Array.Empty<string>();
+
+    /// <summary>The "4" in "using 4 of 7 features they pay for".</summary>
+    public int FeaturesAdoptedCount { get; set; }
+
+    /// <summary>The "7".</summary>
+    public int FeaturesEntitledCount { get; set; }
+
     // ── Axis 3: operator mix ───────────────────────────────────────────────────
     public OperatorMix Operators { get; set; }
     public DateTime? LastTeacherActivityAt { get; set; }

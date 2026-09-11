@@ -15,6 +15,12 @@ namespace Edvanz.Application.ServiceContract;
 public interface IAdminInsightsService
 {
     /// <summary>
+    /// THE LANDING PAGE — how the subscribed base is doing, and where the product is not landing.
+    /// Scoped to subscribers by default; pass false to fold in free and expired accounts.
+    /// </summary>
+    Task<Result<AdminNumbersDto>> GetNumbersAsync(bool subscribedOnly);
+
+    /// <summary>
     /// THE CALL LIST — the admin landing page. One ranked, DEDUPLICATED list answering the only
     /// question that screen exists for: which teachers do I contact today, and what do I say?
     ///

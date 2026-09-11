@@ -65,6 +65,14 @@ public interface ITeacherUsageRepo
     Task<IReadOnlyList<UsageHourBucket>> GetMessagingBucketsAsync(
         long teacherId, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
 
+    /// <summary>
+    /// One-off payment events created (PaymentEvent, excluding deleted). Measured so the grantable
+    /// module "Event-Based Payment" has usage data behind it — without this, every teacher holding
+    /// that grant would be reported as ignoring a feature nobody was measuring.
+    /// </summary>
+    Task<IReadOnlyList<UsageHourBucket>> GetEventPaymentBucketsAsync(
+        long teacherId, DateTime fromUtc, DateTime toUtc, CancellationToken ct = default);
+
     // ── Point-in-time facts ────────────────────────────────────────────────────
 
     /// <summary>The live setup-health counts. See <see cref="UsageSetupHealth"/>.</summary>

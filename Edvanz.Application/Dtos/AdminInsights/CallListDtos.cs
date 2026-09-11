@@ -57,8 +57,18 @@ public class CallListDto
 {
     public DateTime GeneratedAt { get; set; }
 
-    /// <summary>How many teachers need a call at all — the list may be capped below this.</summary>
+    /// <summary>
+    /// How many teachers need a call AT ALL, across every reason. Always the full figure, never
+    /// narrowed by the active chip — it is what the "Everything" chip shows and therefore the way
+    /// back out of a filter.
+    /// </summary>
     public int TotalNeedingContact { get; set; }
+
+    /// <summary>
+    /// How many match the reason currently selected. Equals <see cref="TotalNeedingContact"/> when
+    /// nothing is selected. Paging must count against THIS, or "show more" miscounts once filtered.
+    /// </summary>
+    public int TotalInView { get; set; }
 
     public int TotalTeachers { get; set; }
 

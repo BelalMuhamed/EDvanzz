@@ -20,6 +20,27 @@ namespace Edvanz.Infrastructure.Repositories
                 .Select(tpu => tpu.module).ToListAsync();
 
         }
+
+        /// <inheritdoc />
+        public async Task<IReadOnlyDictionary<long, List<string>>> GetModuleNamesByTeacherIdsAsync(
+            IReadOnlyCollection<long> teacherIds)
+        {
+            if (teacherIds.Count == 0)
+                return new Dictionary<long, List<string>>();
+
+            // ONE query for every teacher in the rollup. The per-teacher reads above would be a few
+            // hundred round trips across a nightly pass; the composite PK (TutorId, ModuleId) serves
+            // the predicate, and only the two columns needed cross the wire.
+            var rows = await _context.TutorModuleAccess
+                .AsNoTracking()
+                .Where(t => teacherIds.Contains(t.TutorId))
+                .Select(t => new { t.TutorId, t.module.Name })
+                .ToListAsync();
+
+            return rows
+                .GroupBy(r => r.TutorId)
+                .ToDictionary(g => g.Key, g => g.Select(r => r.Name).ToList());
+        }
         // ════════════════════════════════════════════════════════════════════════════
         // EXTENSION TO EXISTING TeacherModuleRepo (Edvanz.Infrastructure.Repositories)
         // ════════════════════════════════════════════════════════════════════════════

@@ -38,7 +38,108 @@ public class AdminInsightsService : IAdminInsightsService
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // THE CALL LIST — the landing page
+    // THE NUMBERS — the landing page
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <inheritdoc />
+    public async Task<Result<AdminNumbersDto>> GetNumbersAsync(bool subscribedOnly)
+    {
+        var repo = _unitOfWork.AdminInsightsRepo;
+        DateOnly today = DateOnly.FromDateTime(_timeZone.ConvertUtcToLocal(DateTime.UtcNow));
+
+        var rows = await repo.GetAdoptionRowsAsync(subscribedOnly);
+
+        // Per-feature adoption. Counted only over teachers ENTITLED to each feature — a plan that
+        // does not include videos must not drag the videos number down, or the table stops meaning
+        // anything.
+        var features = new List<FeatureAdoptionDto>();
+        foreach (var module in Enum.GetValues<UsageModules>())
+        {
+            if (module == UsageModules.None) continue;
+            int bit = (int)module;
+
+            var entitled = rows.Where(r => (r.EntitledMask & bit) != 0).ToList();
+            if (entitled.Count == 0) continue;
+
+            features.Add(new FeatureAdoptionDto
+            {
+                Feature = module.ToString(),
+                Entitled = entitled.Count,
+                UsingNow = entitled.Count(r => (r.UsedMask30 & bit) != 0),
+                EverUsed = entitled.Count(r => (r.EverUsedMask & bit) != 0),
+                NeverUsed = entitled.Count(r => (r.EverUsedMask & bit) == 0)
+            });
+        }
+
+        // Worst-adopted first: the table is read to find where the product is failing to land, not
+        // to admire the features that already work.
+        features = features
+            .OrderBy(f => f.Entitled == 0 ? 1d : (double)f.EverUsed / f.Entitled)
+            .ThenByDescending(f => f.Entitled)
+            .ToList();
+
+        var byPlan = rows
+            .GroupBy(r => r.PlanType?.ToString() ?? "None")
+            .Select(g => new PlanBreakdownDto
+            {
+                Plan = g.Key,
+                Teachers = g.Count(),
+                Active = g.Count(r => r.ActiveDays30 > 0),
+                AdoptionPercent = AverageAdoptionPercent(g)
+            })
+            .OrderByDescending(p => p.Teachers)
+            .ToList();
+
+        // The previous 30-day window, over THIS scope — so the delta compares subscribers with
+        // subscribers. Taking the platform-wide figure here would silently mix the free and expired
+        // base into one half of the comparison.
+        var ids = rows.Select(r => r.TeacherId).ToList();
+        var previous = await repo.GetDayTotalsForTeachersAsync(ids, today.AddDays(-59), today.AddDays(-30));
+        int activePrevious = previous.Count(kv => kv.Value.Any(d => d.TotalWrites > 0));
+
+        // Reuse the call list rather than re-deriving "needs attention" — one definition, so the
+        // landing figure and the list it links to can never disagree.
+        var callList = await GetCallListAsync(null, 1);
+
+        var dto = new AdminNumbersDto
+        {
+            GeneratedAt = DateTime.UtcNow,
+            SubscribedOnly = subscribedOnly,
+            Teachers = rows.Count,
+            Active = rows.Count(r => r.ActiveDays30 > 0),
+            ActivePrevious = activePrevious,
+            SetUp = rows.Count(r => r.HasRealData),
+            NeedAttention = callList.Data?.TotalNeedingContact ?? 0,
+            FeatureAdoption = features,
+            ByPlan = byPlan
+        };
+
+        return Result<AdminNumbersDto>.Success(dto, _localizer);
+    }
+
+    /// <summary>
+    /// Mean share of entitled features actually adopted, as a whole percent. Teachers entitled to
+    /// nothing are skipped rather than counted as 0% — they would otherwise drag a plan's figure
+    /// down for a reason that has nothing to do with adoption.
+    /// </summary>
+    private static int AverageAdoptionPercent(IEnumerable<TeacherAdoptionRow> rows)
+    {
+        var scored = rows
+            .Select(r => new
+            {
+                Entitled = UsageModuleEntitlement.Count(r.EntitledMask),
+                Adopted = UsageModuleEntitlement.Count(
+                    UsageModuleEntitlement.Adopted(r.EntitledMask, r.EverUsedMask))
+            })
+            .Where(x => x.Entitled > 0)
+            .ToList();
+
+        if (scored.Count == 0) return 0;
+        return (int)Math.Round(scored.Average(x => (double)x.Adopted / x.Entitled) * 100);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // THE CALL LIST
     // ════════════════════════════════════════════════════════════════════════
 
     /// <inheritdoc />
@@ -50,15 +151,19 @@ public class AdminInsightsService : IAdminInsightsService
         CallReason? only = Enum.TryParse<CallReason>(reasonKey, true, out var parsed) ? parsed : null;
 
         // Walk the reasons IN PRIORITY ORDER and keep the FIRST one that claims each teacher.
-        // This single dictionary is what makes the list a worklist: without it a teacher who paid,
-        // never started and has students stranded appears three times with no hint which matters.
+        // This single dictionary is what makes the list a worklist: without it a teacher who has
+        // subscribed, never started and has students stranded appears three times with no hint
+        // which matters.
+        //
+        // CRITICAL: the walk is ALWAYS over every reason, never narrowed to the selected one. The
+        // chip counts have to describe the WHOLE list or the filter chips misreport — and when the
+        // counts collapsed to a single entry the UI hid the chip row entirely, stranding the reader
+        // on one filter with no way back. Selection is applied at the END, to the items only.
         var claimed = new Dictionary<long, CallListItemDto>();
         var counts = new Dictionary<CallReason, int>();
 
         foreach (var (reason, kind, severity) in CallReasonMap.Order)
         {
-            if (only is not null && reason != only) continue;
-
             // A generous slice per reason: the dedupe below decides what actually survives, so
             // taking only `take` here would let a high-priority reason starve a lower one.
             var (rows, _) = await repo.GetInsightTeachersAsync(kind, today, ReasonFetchLimit);
@@ -67,10 +172,10 @@ public class AdminInsightsService : IAdminInsightsService
             {
                 if (claimed.ContainsKey(r.TeacherId)) continue;
 
-                // PaidNotStarted is the newly-subscribed query narrowed to the half that matters.
-                // A teacher who paid AND got going needs no call at all, and leaving them in was
-                // what made "just subscribed" 59 rows of mostly-nothing.
-                if (reason == CallReason.PaidNotStarted && r.HasRealData) continue;
+                // SubscribedNotStarted is the newly-subscribed query narrowed to the half that
+                // matters. A teacher who subscribed AND got going needs no call at all, and leaving
+                // them in was what made "just subscribed" 59 rows of mostly-nothing.
+                if (reason == CallReason.SubscribedNotStarted && r.HasRealData) continue;
 
                 claimed[r.TeacherId] = BuildItem(r, reason, severity);
                 counts[reason] = counts.GetValueOrDefault(reason) + 1;
@@ -84,7 +189,12 @@ public class AdminInsightsService : IAdminInsightsService
             .ThenByDescending(i => i.StudentCount)
             .ToList();
 
+        // Everyone who needs a call, regardless of the chip in effect — so the "Everything" chip
+        // always shows the true total and remains a way back out of a filter.
         int totalNeeding = ordered.Count;
+
+        if (only is not null)
+            ordered = ordered.Where(i => i.ReasonKey == only.Value.ToString()).ToList();
         var page = ordered.Take(Math.Clamp(take <= 0 ? CallListDefaultTake : take, 1, 200)).ToList();
 
         // Note counts only for what is actually shown, so the badge costs one query per screen.
@@ -101,6 +211,7 @@ public class AdminInsightsService : IAdminInsightsService
         {
             GeneratedAt = DateTime.UtcNow,
             TotalNeedingContact = totalNeeding,
+            TotalInView = ordered.Count,
             TotalTeachers = totalTeachers,
             Live = live,
             Items = page,
@@ -157,40 +268,51 @@ public class AdminInsightsService : IAdminInsightsService
             ? 0
             : Math.Max(0, (int)(DateTime.UtcNow - r.SubscriptionStartDate.Value).TotalDays);
 
+        // Every string names the subject, carries the real number, and ends in something the reader
+        // can do. The old copy said "paid", which reads as a student's fees rather than the
+        // subscription — that ambiguity reached the screen and was called out.
+        int unusedCount = UsageModuleEntitlement.Count(
+            UsageModuleEntitlement.NeverUsed(r.EntitledModulesMask, r.ModulesUsedAllTimeMask));
+
         (string why, string action) = reason switch
         {
-            CallReason.PaidNotStarted => (
-                _localizer["CallWhyPaidNotStarted", Ago(daysSubscribed), Students(r.StudentCount)],
-                _localizer["CallDoPaidNotStarted"]),
+            CallReason.SubscribedNotStarted => (
+                _localizer["CallWhySubscribedNotStarted", Ago(daysSubscribed), Students(r.StudentCount)],
+                _localizer["CallDoSubscribedNotStarted"]),
 
-            CallReason.ExpiringWhileWorking => (
-                _localizer["CallWhyExpiring", r.ActiveDays30, r.SubscriptionStatus?.ToString() ?? ""],
-                _localizer["CallDoExpiring"]),
+            CallReason.SubscriptionEnding => (
+                _localizer["CallWhySubscriptionEnding", r.ActiveDays30,
+                    r.SubscriptionEndDate?.ToString("d MMM") ?? "-"],
+                _localizer["CallDoSubscriptionEnding"]),
 
-            CallReason.OwnerStopped => (
-                _localizer["CallWhyOwnerStopped", Assistants(r.ActiveAssistantCount),
-                    r.LastTeacherActivityAt?.ToString("yyyy-MM-dd") ?? "-"],
-                _localizer["CallDoOwnerStopped"]),
+            CallReason.OnlyAssistantsWorking => (
+                _localizer["CallWhyOnlyAssistantsWorking", Assistants(r.ActiveAssistantCount),
+                    r.LastTeacherActivityAt?.ToString("d MMM") ?? "-"],
+                _localizer["CallDoOnlyAssistantsWorking"]),
 
-            CallReason.WentQuiet => (
-                _localizer["CallWhyWentQuiet", daysSilent, Students(r.StudentCount)],
-                _localizer["CallDoWentQuiet"]),
+            CallReason.StoppedUsingIt => (
+                _localizer["CallWhyStoppedUsingIt", daysSilent, Students(r.StudentCount)],
+                _localizer["CallDoStoppedUsingIt"]),
 
-            CallReason.StudentsStranded => (
-                _localizer["CallWhyStudentsStranded", Students(r.StudentCount)],
-                _localizer["CallDoStudentsStranded"]),
+            CallReason.StudentsSeeNothing => (
+                _localizer["CallWhyStudentsSeeNothing", Students(r.StudentCount)],
+                _localizer["CallDoStudentsSeeNothing"]),
 
-            CallReason.SetUpNotRunning => (
-                _localizer["CallWhySetUpNotRunning", Students(r.StudentCount), daysSilent],
-                _localizer["CallDoSetUpNotRunning"]),
+            CallReason.SetUpNeverTaught => (
+                _localizer["CallWhySetUpNeverTaught", Students(r.StudentCount), daysSilent],
+                _localizer["CallDoSetUpNeverTaught"]),
 
-            CallReason.NeverStarted => (
-                _localizer["CallWhyNeverStarted", daysRegistered],
-                _localizer["CallDoNeverStarted"]),
+            // The only reason that reads the teacher's OWN entitlement — naming the features makes
+            // it a specific conversation instead of a generic upsell.
+            CallReason.PayingForUnusedFeatures => (
+                _localizer["CallWhyPayingForUnusedFeatures", unusedCount,
+                    string.Join(", ", ModuleNames(
+                        UsageModuleEntitlement.NeverUsed(r.EntitledModulesMask, r.ModulesUsedAllTimeMask)))],
+                _localizer["CallDoPayingForUnusedFeatures"]),
 
             _ => (
-                _localizer["CallWhyOneModuleOnly", ModuleNames(r.ModulesUsedMask).FirstOrDefault() ?? "-"],
-                _localizer["CallDoOneModuleOnly"])
+                _localizer["CallWhyNeverSetUp", Ago(daysRegistered)],
+                _localizer["CallDoNeverSetUp"])
         };
 
         return new CallListItemDto
@@ -515,6 +637,14 @@ public class AdminInsightsService : IAdminInsightsService
         Depth = r.Depth,
         Modules = ModuleNames(r.ModulesUsedMask),
         ModulesAllTime = ModuleNames(r.ModulesUsedAllTimeMask),
+        FeaturesEntitled = ModuleNames(r.EntitledModulesMask),
+        FeaturesNeverUsed = ModuleNames(
+            UsageModuleEntitlement.NeverUsed(r.EntitledModulesMask, r.ModulesUsedAllTimeMask)),
+        FeaturesLapsed = ModuleNames(
+            UsageModuleEntitlement.Lapsed(r.ModulesUsedAllTimeMask, r.ModulesUsedMask)),
+        FeaturesAdoptedCount = UsageModuleEntitlement.Count(
+            UsageModuleEntitlement.Adopted(r.EntitledModulesMask, r.ModulesUsedAllTimeMask)),
+        FeaturesEntitledCount = UsageModuleEntitlement.Count(r.EntitledModulesMask),
         Operators = r.Operators,
         LastTeacherActivityAt = r.LastTeacherActivityAt,
         LastAssistantActivityAt = r.LastAssistantActivityAt,

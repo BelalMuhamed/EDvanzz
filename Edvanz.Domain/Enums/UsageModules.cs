@@ -34,6 +34,13 @@ public enum UsageModules
     /// <summary>Money collected (PaymentTransaction where !IsDeleted).</summary>
     Payments = 1 << 3,
 
+    /// <summary>
+    /// One-off event payments (PaymentEvent). Measured so that the grantable module set and the
+    /// measured set line up — "Event-Based Payment" is grantable, and without a flag here every
+    /// teacher who has it would be reported as ignoring it with no data either way.
+    /// </summary>
+    EventPayments = 1 << 9,
+
     /// <summary>Videos uploaded (VideoAsset).</summary>
     Videos = 1 << 4,
 

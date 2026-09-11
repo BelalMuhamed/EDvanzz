@@ -69,6 +69,14 @@ public interface IAdminInsightsRepo
     Task<IReadOnlyList<TeacherOperatorRow>> GetOperatorsAsync(
         long teacherId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The raw material for the landing page: one tiny row per teacher in scope (masks, plan,
+    /// activity). Bit arithmetic happens in the service — SQL Server has no bitwise aggregate, and
+    /// these rows are a handful of ints each.
+    /// </summary>
+    Task<IReadOnlyList<TeacherAdoptionRow>> GetAdoptionRowsAsync(
+        bool subscribedOnly, CancellationToken ct = default);
+
     /// <summary>Every sales rep with their teachers' usage outcomes rolled up. One GROUP BY.</summary>
     Task<IReadOnlyList<SalesRepPerformanceRow>> GetSalesRepPerformanceAsync(
         bool includeInactive, CancellationToken ct = default);
@@ -102,7 +110,13 @@ public enum AdminInsightKind
     ExpiringWhileActive = 7,
 
     /// <summary>
-    /// Paid recently. Ordered so the ones who have NOT started yet come first — a teacher who has
+    /// Running fine, but entitled to features they have NEVER opened. The adoption gap — needs the
+    /// teacher's own entitlement, so it is the one kind that cannot be derived from usage alone.
+    /// </summary>
+    UnusedEntitlements = 9,
+
+    /// <summary>
+    /// Subscribed recently. Ordered so the ones who have NOT started yet come first — a teacher who has
     /// just handed over money and cannot get going is the most urgent call on the platform, and the
     /// easiest refund request to avoid.
     /// </summary>
@@ -188,6 +202,10 @@ public sealed class TeacherUsageRow
     public int ModulesUsedMask { get; set; }
     public int ModulesUsedAllTimeMask { get; set; }
 
+    /// <summary>What they are ENTITLED to — grants plus the plan-derived parent portal. The gap
+    /// against <see cref="ModulesUsedAllTimeMask"/> is what they pay for and never opened.</summary>
+    public int EntitledModulesMask { get; set; }
+
     public DateTime? FirstActivityAt { get; set; }
     public DateTime? LastActivityAt { get; set; }
     public DateTime? LastTeacherActivityAt { get; set; }
@@ -221,6 +239,17 @@ public sealed record AdminOverviewAggregates(
     IReadOnlyDictionary<UsageDepth, int> ByDepth,
     IReadOnlyDictionary<OperatorMix, int> ByOperator,
     IReadOnlyDictionary<UsageModules, int> ModuleAdoption);
+
+/// <summary>One teacher reduced to what the adoption maths needs. Deliberately tiny.</summary>
+public sealed record TeacherAdoptionRow(
+    long TeacherId,
+    SubscriptionPlanType? PlanType,
+    bool IsSubscribed,
+    int ActiveDays30,
+    bool HasRealData,
+    int EntitledMask,
+    int UsedMask30,
+    int EverUsedMask);
 
 /// <summary>One person who works a teacher's account.</summary>
 public sealed record TeacherOperatorRow(

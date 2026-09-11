@@ -3,6 +3,7 @@ using Edvanz.Application.ServiceContract;
 using Edvanz.Domain.Constants;
 using Edvanz.Domain.Entities;
 using Edvanz.Domain.Enums;
+using Edvanz.Domain.Helpers;
 using Edvanz.Domain.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -28,17 +29,20 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ITimeZoneService _timeZone;
+    private readonly ISubscriptionGateService _subscriptionGate;
     private readonly AdminInsightsOptions _options;
     private readonly ILogger<TeacherUsageRollupService> _logger;
 
     public TeacherUsageRollupService(
         IUnitOfWork unitOfWork,
         ITimeZoneService timeZone,
+        ISubscriptionGateService subscriptionGate,
         IOptions<AdminInsightsOptions> options,
         ILogger<TeacherUsageRollupService> logger)
     {
         _unitOfWork = unitOfWork;
         _timeZone = timeZone;
+        _subscriptionGate = subscriptionGate;
         _options = options.Value;
         _logger = logger;
     }
@@ -70,6 +74,27 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
                 TeacherId: id,
                 Days: needBackfill.Contains(id) ? backfillDays : tailDays))
             .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task RefreshEntitlementAsync(long teacherId, CancellationToken ct = default)
+    {
+        var repo = _unitOfWork.TeacherUsageRepo;
+        var snapshot = await repo.GetSnapshotAsync(teacherId, ct);
+
+        // No snapshot yet means the rollup has never reached this teacher; it will pick the
+        // entitlement up on its first run, so there is nothing to refresh.
+        if (snapshot is null) return;
+
+        var grants = await _unitOfWork.ModuleTeacherRepo!
+            .GetModuleNamesByTeacherIdsAsync(new[] { teacherId });
+        var plan = await _subscriptionGate.GetPlanEntitlementsAsync(teacherId);
+
+        snapshot.EntitledModulesMask = UsageModuleEntitlement.Build(
+            grants.GetValueOrDefault(teacherId) ?? new List<string>(),
+            plan.ParentFollowUpAllowed);
+
+        await repo.UpsertSnapshotAsync(snapshot, ct);
     }
 
     /// <inheritdoc />
@@ -109,6 +134,7 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
         var students = await repo.GetStudentBucketsAsync(teacherId, fromUtc, toUtc, ct);
         var sessions = await repo.GetSessionBucketsAsync(teacherId, fromUtc, toUtc, ct);
         var messaging = await repo.GetMessagingBucketsAsync(teacherId, fromUtc, toUtc, ct);
+        var eventPayments = await repo.GetEventPaymentBucketsAsync(teacherId, fromUtc, toUtc, ct);
 
         // ── Fold into local days ───────────────────────────────────────────────
         var byDay = new Dictionary<DateOnly, DayAccumulator>();
@@ -173,6 +199,7 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
         AddUnattributed(students, UsageModules.Students, (a, n) => a.StudentWrites += n);
         AddUnattributed(sessions, UsageModules.Sessions, (a, n) => a.SessionWrites += n);
         AddUnattributed(messaging, UsageModules.Messaging, (a, n) => a.MessagingWrites += n);
+        AddUnattributed(eventPayments, UsageModules.EventPayments, (a, n) => a.EventPaymentWrites += n);
 
         // Drop days outside the requested window. The UTC margin above deliberately over-fetches;
         // this is where the excess is discarded.
@@ -254,6 +281,17 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
         if (lastActivity is not null &&
             (snapshot.LastActivityAt is null || lastActivity > snapshot.LastActivityAt))
             snapshot.LastActivityAt = lastActivity;
+
+        // ── Entitlement: what are they actually allowed to use? ────────────────
+        // Grant rows are the same source the runtime gate reads, so this can never disagree with
+        // what the teacher can open. The parent portal has no grant row and is plan-derived.
+        var grants = await _unitOfWork.ModuleTeacherRepo!
+            .GetModuleNamesByTeacherIdsAsync(new[] { teacherId });
+        var plan = await _subscriptionGate.GetPlanEntitlementsAsync(teacherId);
+
+        snapshot.EntitledModulesMask = UsageModuleEntitlement.Build(
+            grants.GetValueOrDefault(teacherId) ?? new List<string>(),
+            plan.ParentFollowUpAllowed);
 
         snapshot.StudentCount = setup.StudentCount;
         snapshot.StudentsAssignedToSession = setup.StudentsAssignedToSession;
@@ -350,6 +388,7 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
         public int ExamHomeworkWrites;
         public int MessagingWrites;
         public int ParentPortalWrites;
+        public int EventPaymentWrites;
         public int ModulesMask;
         public int TotalWrites;
         public int TeacherWrites;
@@ -369,6 +408,7 @@ public class TeacherUsageRollupService : ITeacherUsageRollupService
             ExamHomeworkWrites = ExamHomeworkWrites,
             MessagingWrites = MessagingWrites,
             ParentPortalWrites = ParentPortalWrites,
+            EventPaymentWrites = EventPaymentWrites,
             ModulesMask = ModulesMask,
             TotalWrites = TotalWrites,
             TeacherWrites = TeacherWrites,

@@ -2901,4 +2901,76 @@
   <data name="CountAssistantMany" xml:space="preserve">
     <value>{0} assistants</value>
   </data>
+  <data name="CallReasonSubscribedNotStarted" xml:space="preserve">
+    <value>Subscribed, never set up</value>
+  </data>
+  <data name="CallReasonSubscriptionEnding" xml:space="preserve">
+    <value>Active, subscription ending</value>
+  </data>
+  <data name="CallReasonOnlyAssistantsWorking" xml:space="preserve">
+    <value>Only assistants are working</value>
+  </data>
+  <data name="CallReasonStoppedUsingIt" xml:space="preserve">
+    <value>Stopped using it</value>
+  </data>
+  <data name="CallReasonStudentsSeeNothing" xml:space="preserve">
+    <value>Students can't see anything</value>
+  </data>
+  <data name="CallReasonSetUpNeverTaught" xml:space="preserve">
+    <value>Set up, never taught</value>
+  </data>
+  <data name="CallReasonPayingForUnusedFeatures" xml:space="preserve">
+    <value>Paying for unused features</value>
+  </data>
+  <data name="CallReasonNeverSetUp" xml:space="preserve">
+    <value>Never set up</value>
+  </data>
+  <data name="CallWhySubscribedNotStarted" xml:space="preserve">
+    <value>Subscribed {0}. {1} added, and no classes scheduled yet.</value>
+  </data>
+  <data name="CallWhySubscriptionEnding" xml:space="preserve">
+    <value>Taught on {0} days this month. The subscription ends {1}.</value>
+  </data>
+  <data name="CallWhyOnlyAssistantsWorking" xml:space="preserve">
+    <value>{0} still working. The teacher has not opened the app since {1}.</value>
+  </data>
+  <data name="CallWhyStoppedUsingIt" xml:space="preserve">
+    <value>Nothing for {0} days, with {1} on the books.</value>
+  </data>
+  <data name="CallWhyStudentsSeeNothing" xml:space="preserve">
+    <value>{0}, and not one of them is in a class.</value>
+  </data>
+  <data name="CallWhySetUpNeverTaught" xml:space="preserve">
+    <value>{0} and class days ready, but nothing has happened for {1} days.</value>
+  </data>
+  <data name="CallWhyPayingForUnusedFeatures" xml:space="preserve">
+    <value>Paying for {0} features they have never opened: {1}.</value>
+  </data>
+  <data name="CallWhyNeverSetUp" xml:space="preserve">
+    <value>Subscribed {0} and has never set anything up.</value>
+  </data>
+  <data name="CallDoSubscribedNotStarted" xml:space="preserve">
+    <value>Call today and set up their students and first class with them.</value>
+  </data>
+  <data name="CallDoSubscriptionEnding" xml:space="preserve">
+    <value>Renew them before they lose access. They are actively teaching.</value>
+  </data>
+  <data name="CallDoOnlyAssistantsWorking" xml:space="preserve">
+    <value>Ask the teacher why they stopped. The account runs without them.</value>
+  </data>
+  <data name="CallDoStoppedUsingIt" xml:space="preserve">
+    <value>Call now, while it is recent, and ask what changed.</value>
+  </data>
+  <data name="CallDoStudentsSeeNothing" xml:space="preserve">
+    <value>Put their students into a class. Until then all of them open an empty app.</value>
+  </data>
+  <data name="CallDoSetUpNeverTaught" xml:space="preserve">
+    <value>Everything is ready. Ask what is stopping them from starting.</value>
+  </data>
+  <data name="CallDoPayingForUnusedFeatures" xml:space="preserve">
+    <value>Show them one of these features on the call.</value>
+  </data>
+  <data name="CallDoNeverSetUp" xml:space="preserve">
+    <value>Book a setup call and get their first class scheduled.</value>
+  </data>
 </root>

@@ -1,4 +1,5 @@
 ﻿using Edvanz.Application.Dtos;
+using Edvanz.Application.ServiceContract;
 using Edvanz.Application.Dtos.AuditTrial;
 using Edvanz.Application.Dtos.Subscription;
 using Edvanz.Application.IservicesContract;
@@ -34,6 +35,7 @@ public class TutorModuleAccessService : ITutorModuleAccessService
     private readonly IStringLocalizer<Messages> _localizer;
     private readonly IUserAuthInvalidationService _authInvalidation;
     private readonly IAudittrialService _auditTrail;
+    private readonly ITeacherUsageRollupService _usageRollup;
     private readonly ILogger<TutorModuleAccessService> _logger;
 
     public TutorModuleAccessService(
@@ -41,13 +43,33 @@ public class TutorModuleAccessService : ITutorModuleAccessService
         IStringLocalizer<Messages> localizer,
         IUserAuthInvalidationService authInvalidation,
         IAudittrialService auditTrail,
+        ITeacherUsageRollupService usageRollup,
         ILogger<TutorModuleAccessService> logger)
     {
+        _usageRollup = usageRollup;
         _unitOfWork = unitOfWork;
         _localizer = localizer;
         _authInvalidation = authInvalidation;
         _auditTrail = auditTrail;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Best-effort refresh of the admin usage model's entitlement cache. Swallows and logs, because
+    /// the grant itself has already committed and must stand regardless.
+    /// </summary>
+    private async Task RefreshUsageEntitlementAsync(long teacherId)
+    {
+        try
+        {
+            await _usageRollup.RefreshEntitlementAsync(teacherId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Module grant committed for teacher {TeacherId} but the admin entitlement cache could "
+                + "not be refreshed; tonight's rollup will correct it.", teacherId);
+        }
     }
 
     /// <inheritdoc />
@@ -95,6 +117,11 @@ public class TutorModuleAccessService : ITutorModuleAccessService
             await _authInvalidation.InvalidateTutorAndAssistantsAsync(request.TeacherId);
 
             await _unitOfWork.SaveChangesAsync();
+
+            // The admin usage model caches what each teacher is ENTITLED to. Refresh it now rather
+            // than leaving a module granted this morning to read as an unused entitlement until
+            // tonight's rollup. Best-effort: a derived cache must never fail an admin's grant.
+            await RefreshUsageEntitlementAsync(request.TeacherId);
             await _unitOfWork.CommitAsync();
 
             return Result<string>.Success(null, _localizer, "ModuleGranted");
@@ -149,6 +176,11 @@ public class TutorModuleAccessService : ITutorModuleAccessService
             await _authInvalidation.InvalidateTutorAndAssistantsAsync(request.TeacherId);
 
             await _unitOfWork.SaveChangesAsync();
+
+            // The admin usage model caches what each teacher is ENTITLED to. Refresh it now rather
+            // than leaving a module granted this morning to read as an unused entitlement until
+            // tonight's rollup. Best-effort: a derived cache must never fail an admin's grant.
+            await RefreshUsageEntitlementAsync(request.TeacherId);
             await _unitOfWork.CommitAsync();
 
             return Result<string>.Success(null, _localizer, "ModuleRevoked");
@@ -293,6 +325,11 @@ public class TutorModuleAccessService : ITutorModuleAccessService
             await _authInvalidation.InvalidateTutorAndAssistantsAsync(request.TeacherId);
 
             await _unitOfWork.SaveChangesAsync();
+
+            // The admin usage model caches what each teacher is ENTITLED to. Refresh it now rather
+            // than leaving a module granted this morning to read as an unused entitlement until
+            // tonight's rollup. Best-effort: a derived cache must never fail an admin's grant.
+            await RefreshUsageEntitlementAsync(request.TeacherId);
             await _unitOfWork.CommitAsync();
 
             return Result<string>.Success(null, _localizer, "ModulesReplaced");

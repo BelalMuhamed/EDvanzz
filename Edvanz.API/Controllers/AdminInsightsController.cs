@@ -49,7 +49,36 @@ public class AdminInsightsController : ApiBaseController
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // ENDPOINT 0: THE CALL LIST — the landing page
+    // ENDPOINT 0: THE NUMBERS — the landing page
+    // ══════════════════════════════════════════════════════════════════════════
+    //
+    // WHAT IT DOES:
+    //   How the SUBSCRIBED base is doing, and where the product is not landing.
+    //
+    //   The centrepiece is the feature-adoption table: for every feature, how many teachers are
+    //   ENTITLED to it, how many use it, and how many have never opened it. Adoption is counted
+    //   only over the entitled — a plan that does not include videos must not drag the videos
+    //   number down, or the table stops meaning anything.
+    //
+    // WHY SUBSCRIBED-ONLY BY DEFAULT:
+    //   The free and expired accounts outnumber the paying ones and made every platform figure look
+    //   like a failure when the subscribers were fine. Pass subscribedOnly=false to fold them in.
+    //
+    // SAMPLE: GET /api/admin/insights/numbers
+    //         GET /api/admin/insights/numbers?subscribedOnly=false
+    //
+    // ══════════════════════════════════════════════════════════════════════════
+    [HttpGet("numbers")]
+    [ModulePermission(roles: new[] { "SuperAdmin" }, roleOnly: true)]
+    [ProducesResponseType(typeof(Result<AdminNumbersDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetNumbers([FromQuery] bool subscribedOnly = true)
+    {
+        if (_currentUser.UserId is null) return UserNotResolved();
+        return ToResponse(await _insights.GetNumbersAsync(subscribedOnly));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ENDPOINT 0b: THE CALL LIST
     // ══════════════════════════════════════════════════════════════════════════
     //
     // WHAT IT DOES:

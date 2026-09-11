@@ -27,6 +27,15 @@ public interface ITeacherUsageRollupService
     Task<UsageRollupOutcome> RollupTeacherAsync(long teacherId, int days, CancellationToken ct = default);
 
     /// <summary>
+    /// Recomputes ONLY the entitlement mask for one teacher — cheap, no activity queries.
+    ///
+    /// Called the moment a module is granted or revoked, so a feature granted this morning does not
+    /// read as an unused entitlement until the nightly run. Best-effort by contract: an admin's
+    /// grant must never fail because a derived cache could not be refreshed.
+    /// </summary>
+    Task RefreshEntitlementAsync(long teacherId, CancellationToken ct = default);
+
+    /// <summary>
     /// The teachers the nightly dispatcher should enqueue, each paired with the window it needs:
     /// the short recompute tail normally, or the full backfill window for a teacher who has no
     /// snapshot yet (a new account, or the very first run after deploy).
