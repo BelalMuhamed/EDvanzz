@@ -1686,7 +1686,7 @@
     <value>At least one question is required</value>
   </data>
   <data name="OnlineExam.ExamNotDraft" xml:space="preserve">
-    <value>You can't change this exam because students have already submitted it. You can still edit its name, notes, and scores.</value>
+    <value>You can't change this exam because students have already submitted it.</value>
   </data>
   <data name="OnlineExam.UnpublishBlockedBySubmissions" xml:space="preserve">
     <value>Can't unpublish — students have already submitted this exam</value>

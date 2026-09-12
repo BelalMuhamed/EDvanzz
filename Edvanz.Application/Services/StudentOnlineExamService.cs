@@ -654,11 +654,26 @@ public class StudentOnlineExamService : IStudentOnlineExamService
         if (now < exam.StartDateTime || now > exam.EndDateTime)
             return (null, Result<OnlineExamStatsDto>.Failure(_localizer, OnlineExamConstants.Messages.WindowClosed, HttpStatusCode.Conflict));
 
+        // Assignment gate — a caller with an existing report was assigned when they
+        // started, so let them finish even if later unassigned (case-3), exactly as the
+        // result, review, block and violation paths already do. Without this, a teacher
+        // editing an exam's recipients mid-sitting would 403 that student's next answer
+        // and their final submit, stranding an attempt they were entitled to make; the
+        // window and status checks above still apply to everyone.
+        //
+        // The report is read only AFTER a failed scope check, unlike the sibling paths
+        // that need it regardless: this runs on every answer save, and the caller loads
+        // the report itself straight afterwards.
         bool isAssigned = await _unitOfWork.OnlineExamsRepo
             .BuildAssignedStudentIdsQuery(onlineExamId, teacherId)
             .AnyAsync(id => id == teacherStudentId);
         if (!isAssigned)
-            return (null, Result<OnlineExamStatsDto>.Failure(_localizer, OnlineExamConstants.Messages.NotInScope, HttpStatusCode.Forbidden));
+        {
+            var startedReport = await _unitOfWork.StudentOnlineExamReportsRepo
+                .GetByExamAndStudentAsync(onlineExamId, teacherStudentId);
+            if (startedReport is null)
+                return (null, Result<OnlineExamStatsDto>.Failure(_localizer, OnlineExamConstants.Messages.NotInScope, HttpStatusCode.Forbidden));
+        }
 
         return (exam, null);
     }

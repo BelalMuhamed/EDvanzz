@@ -1704,7 +1704,7 @@
     <value>لازم يكون فيه سؤال واحد على الأقل</value>
   </data>
   <data name="OnlineExam.ExamNotDraft" xml:space="preserve">
-    <value>مش هتقدر تغيّر الامتحان ده لأن فيه طلبة سلّموه بالفعل. لسه تقدر تعدّل الاسم والملاحظات والدرجات.</value>
+    <value>مش هتقدر تغيّر الامتحان ده لأن فيه طلبة سلّموه بالفعل.</value>
   </data>
   <data name="OnlineExam.UnpublishBlockedBySubmissions" xml:space="preserve">
     <value>مينفعش تلغي النشر — في طلاب سلّموا الامتحان ده بالفعل</value>

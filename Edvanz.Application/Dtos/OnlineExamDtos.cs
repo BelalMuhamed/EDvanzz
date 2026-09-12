@@ -56,7 +56,9 @@ public sealed class CreateOnlineExamRequest
     public List<CreateOnlineExamQuestionDto>? Questions { get; set; }
 }
 
-/// <summary>T8 edit body — metadata only, no questions. RowVersion required.</summary>
+/// <summary>
+/// T8 edit body — metadata and recipients, no questions. RowVersion required.
+/// </summary>
 public sealed class UpdateOnlineExamRequest
 {
     public string Title { get; set; } = null!;
@@ -71,6 +73,21 @@ public sealed class UpdateOnlineExamRequest
     public bool BlockOnViolation { get; set; } = false;
     /// <summary>Violations tolerated before auto-block (warn before, block on the Nth). Default 2. Must be &gt;= 0.</summary>
     public int MaxViolations { get; set; } = 2;
+
+    /// <summary>
+    /// Optional recipient replacement, same shape and rules as create: one scope type
+    /// per exam, every target owned by this teacher, and never an empty list (send the
+    /// recipients you want, not none).
+    /// <para>
+    /// <c>null</c> (or omitted) leaves the exam's recipients exactly as they are — the
+    /// edit screen shipped before this field existed and does not send it, so an older
+    /// client must never be read as "remove everyone". A non-null list REPLACES the
+    /// current set.
+    /// </para>
+    /// Recipients are resolved live on every read, so a change takes effect at once; the
+    /// submitted-report guard above still blocks the whole edit once anyone has handed in.
+    /// </summary>
+    public List<OnlineExamScopeInputDto>? Scopes { get; set; }
 
     public byte[] RowVersion { get; set; } = null!;
 }

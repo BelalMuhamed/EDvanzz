@@ -90,9 +90,10 @@ public sealed class CreateVideoRequest
     public DateTime? PublishDate { get; set; }
 
     /// <summary>
-    /// Optional explicit duration override. When set, <c>DurationSeconds</c> is stored and
-    /// <c>IsDurationManuallySet</c> = true (student reports won't overwrite it — same semantics
-    /// as the update endpoint). Null = 0, learned from the first student open.
+    /// Optional length in seconds, scraped from the YouTube link by the client. SEEDS
+    /// <c>DurationSeconds</c> so the first student's percentage divides by the real figure;
+    /// it is not flagged as human-set, so a player still refines it under the ±5% tolerance
+    /// rule. Null = 0, learned from the first student open.
     /// </summary>
     public int? DurationSeconds { get; set; }
 
@@ -204,10 +205,12 @@ public sealed class UpdateVideoRequest
     public List<long>? UnitIds { get; set; }
 
     /// <summary>
-    /// Optional explicit duration override. When set, <c>DurationSeconds</c>
-    /// is updated directly and <c>IsDurationManuallySet</c> is set true.
-    /// Null = leave duration as-is (student-reported value, or whatever was
-    /// previously set).
+    /// Optional length in seconds. SEEDS <c>DurationSeconds</c> directly; it is
+    /// not flagged as human-set, so a student's player still refines it under
+    /// the ±5% tolerance rule. Null = leave duration as-is (student-reported
+    /// value, or whatever was previously set). A changed <see cref="SourceUrl"/>
+    /// resets the stored value first, so a seed sent alongside one applies to
+    /// the NEW video.
     /// </summary>
     public int? DurationSeconds { get; set; }
 

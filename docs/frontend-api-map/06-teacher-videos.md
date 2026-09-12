@@ -164,9 +164,10 @@ internally.
 | "Add file" (PDF) | `POST api/upload` (`category: "VideoAttachment"`) | multipart (compressed first if >25MB, refused outright if >100MB) | `fileId` appended to `attachmentFileIds` on the next save |
 | Recipients → Groups / Sessions tile | *(navigation only)* | — | opens the shared target-scope picker, pre-filtered to what the unit allows |
 
-**Create JSON** (`POST api/videos`) — note `durationSeconds` and `isPublished`/`publishDate` are **not**
-part of this body at all; publish state is a separate follow-up `PATCH .../status` call, and the
-scraped duration is simply not sent on create (only on a later edit's `PUT`):
+**Create JSON** (`POST api/videos`) — `isPublished`/`publishDate` are **not** part of this body at
+all; publish state is a separate follow-up `PATCH .../status` call. `durationSeconds` carries the
+seconds scraped from the YouTube link when the teacher pasted it, and is omitted when that scrape
+came back empty (never sent as `0`):
 ```json
 {
   "title": "Lesson 3 — Quadratics",
@@ -193,11 +194,13 @@ scraped duration is simply not sent on create (only on a later edit's `PUT`):
     ]
   },
   "videoPhotoFileId": "f-1b77...",
-  "attachmentFileIds": ["f-44de...", "f-0091..."]
+  "attachmentFileIds": ["f-44de...", "f-0091..."],
+  "durationSeconds": 253
 }
 ```
-`scopes`, `exam`, `videoPhotoFileId`, `attachmentFileIds` are all omitted entirely when empty (a
-scope-less/quiz-less/photo-less/attachment-less video is a valid create).
+`scopes`, `exam`, `videoPhotoFileId`, `attachmentFileIds`, `durationSeconds` are all omitted entirely
+when empty (a scope-less/quiz-less/photo-less/attachment-less video is a valid create, and an
+unknown length is left for the first player to report).
 
 **Update JSON** (`PUT api/videos/{id}`) adds status/schedule/version fields; `scopes` here use
 `sessionId`/`sessionGroupId` (singular per entry), not the create shape's `ids` array:
@@ -224,21 +227,24 @@ scope-less/quiz-less/photo-less/attachment-less video is a valid create).
 **Publish-date semantics (important, backend-visible contract):** an **omitted** `publishDate` on
 `PUT` means *keep whatever schedule is already stored* — it is not read as "clear it". The only way to
 clear a stored schedule is the explicit `"clearPublishDate": true` key, which wins over `publishDate`
-if both were somehow sent (the client never sends both). **The reachable Add/Edit Video screen has no
-UI control that ever sends `clearPublishDate: true`** — its date picker can only set a date, never
-clear one. A "Remove schedule" switch that does set it exists only in `teacher_edit_video_view.dart`,
-a screen that is **fully unreachable** (no route pushes it; `AppRoute.goToTeacherEditVideo` always
-pushes `TeacherAddVideoView.forEdit`, not this file). In practice, once a video has a scheduled
-`publishDate`, the currently-shipping app cannot clear it — only replace it with a different date, or
-flip Draft/Published from the detail screen's Settings tab (which itself always sends
-`publishDate: null` via a plain status-only PATCH, see below).
+if both were somehow sent. The two are never emitted together, and the flag is sent **only when the
+teacher removed the date on that visit** (the clear control on the date field, offered while editing);
+an edit that never touched the date says nothing about it, so an unrelated save can never cancel a
+schedule. Draft/Published can also be flipped from the detail screen's Settings tab, which sends a
+status-only PATCH carrying `publishDate: null` and therefore drops any schedule as a side effect.
 
-**Attachment-removal caveat:** `UpdateTeacherVideoParams.removeAttachment` and its
-`attachmentFileIds` are threaded end-to-end (params → JSON), but `removeAttachment` is **never set to
-`true` anywhere in the app** — no UI exposes it. Deleting a file chip in the edit form only empties the
-local `attachmentFileIds` list, and an empty/omitted `attachmentFileIds` on `PUT` means "leave the
-existing attachment(s) unchanged" (see the upload-handshake section above) — so removing the chip
-client-side currently has **no effect** on the server's stored attachment.
+A second "Remove schedule" switch exists in `teacher_edit_video_view.dart`, which is **fully
+unreachable** dead code (no route pushes it; `AppRoute.goToTeacherEditVideo` always pushes
+`TeacherAddVideoView.forEdit`). Ignore that file when reasoning about what the app sends.
+
+**Attachment removal:** an empty/omitted `attachmentFileIds` on `PUT` means "leave the existing
+attachment(s) unchanged", so clearing the last file is expressed by `removeAttachment: true`. The
+edit form sends it only when a file it **opened with** is gone — not merely when its list is empty.
+Two reasons, both worth knowing server-side: a file still uploading has no `fileId` yet, and the
+video **list** row carries no attachment at all (`files: const []`), so a form built before the
+video's overview arrives shows an empty list for a video that does have one. Partial removal needs
+no flag — a non-empty `attachmentFileIds` is the exact new set, so dropping one of two is just a
+shorter list.
 
 ## Video Detail
 _Dart file: `lib/feature/teacher_module/videos/view/teacher_video_detail_view.dart`_
@@ -294,9 +300,10 @@ teacher side, including here.
 ### Dead code found in this chapter (not reachable from any screen)
 
 - `lib/feature/teacher_module/videos/view/teacher_edit_video_view.dart` (`TeacherEditVideoView`) — a
-  single-step edit form with a working "Remove schedule" switch (→ `clearPublishDate: true`). Nothing
-  constructs it; `AppRoute.goToTeacherEditVideo` always pushes `TeacherAddVideoView.forEdit` instead.
-  It is the only place in the app that can clear a video's scheduled `publishDate`.
+  single-step edit form carrying its own "Remove schedule" switch. Nothing constructs it;
+  `AppRoute.goToTeacherEditVideo` always pushes `TeacherAddVideoView.forEdit` instead. It used to be
+  the only thing able to send `clearPublishDate`, which is why a scheduled video could not be
+  un-scheduled; the live form now does it, and this file remains unreachable.
 - `TeacherVideoRepository.toggleVideoStatus` → `PATCH api/videos/{id}/status/toggle` — implemented
   end-to-end (data source, repository) but no cubit/view ever calls it. The reachable visibility
   toggle uses `PATCH api/videos/{id}/status` (an explicit `status` value) instead.

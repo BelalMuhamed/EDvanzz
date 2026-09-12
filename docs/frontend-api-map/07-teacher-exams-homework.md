@@ -317,7 +317,8 @@ Notes:
   "Endpoint coverage" for the dead-code detail).
 - `scopeType` is `"Session"` or `"SessionGroup"`; the sibling id key is `null`.
 
-Update body (`onlineExamUpdateBody`) — **note it never sends `scopes`**:
+Update body (`onlineExamUpdateBody`) — same `scopes` shape as create, built by the one shared
+`onlineExamScopesJson` helper:
 ```json
 {
   "teacherSubjectId": 4,
@@ -330,14 +331,25 @@ Update body (`onlineExamUpdateBody`) — **note it never sends `scopes`**:
   "visibility": true,
   "blockOnViolation": true,
   "maxViolations": 2,
+  "scopes": [
+    { "scopeType": "Session", "sessionId": 81, "sessionGroupId": null }
+  ],
   "rowVersion": "AAAAAAAAB9I="
 }
 ```
-**Gap worth flagging:** the edit screen still shows the Groups/Sessions recipient tile and lets the
-teacher change the selection, but `TeacherOnlineExamCreateCubit._toInput()`/`updateExamInfo` never
-forwards `selectedGroupIds`/`selectedSessionIds` into the PUT body — `scopes` is a create-only field on
-the wire as far as this app is concerned. Changing recipients on an existing exam appears to work in the
-UI but is silently discarded on save.
+**Recipient-edit semantics (backend-visible contract):** the edit form is hydrated with the exam's
+current recipients, so an untouched save sends the same set back and the server compares it as a set
+and does nothing. `scopes` is **omitted** when the selection is somehow empty — absent means "leave
+the recipients alone", which is the safe reading, since an empty list is refused
+(`ScopeCannotBeEmpty`) and silently emptying an exam's audience would be worse than saving nothing.
+Sessions and groups stay mutually exclusive in the form, so a mixed list (rejected as
+`MixedScopeTypesNotAllowed`) is never sent. `teacherSubjectId` is still sent but has no property on
+the server's update DTO and is **ignored** — the subject cannot be changed after create.
+
+Server-side, a recipient change on an already-**Published** exam re-dispatches the publish
+notification; the per-recipient idempotency index means only the newly-added students are told.
+Note the whole update (recipients included) is refused with `ExamNotDraft` (409) once **any**
+student has submitted.
 
 ## Create / Edit Online Exam — Questions step
 _Widget: `lib/feature/teacher_module/exams/view/widgets/teacher_online_exam_questions_step_body.dart`_

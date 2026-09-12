@@ -152,17 +152,8 @@ public class OnlineExamService : IOnlineExamService
                 }
             }
 
-            var scopeEntities = request.Scopes.Select(s => new OnlineExamScope
-            {
-                OnlineExamId = exam.Id,
-                TeacherId = teacherId,
-                ScopeType = s.ScopeType,
-                SessionId = s.SessionId,
-                SessionGroupId = s.SessionGroupId,
-                AssignedByUserId = actingUserId,
-                AssignedAt = utcNow,
-                CreateAt = utcNow,
-            }).ToList();
+            var scopeEntities = BuildScopeEntities(
+                request.Scopes, exam.Id, teacherId, actingUserId, utcNow);
             await _unitOfWork.OnlineExamsRepo.AddScopesRangeAsync(scopeEntities);
 
             await _unitOfWork.SaveChangesAsync();
@@ -193,36 +184,103 @@ public class OnlineExamService : IOnlineExamService
         if (await _unitOfWork.StudentOnlineExamReportsRepo.HasAnySubmittedReportAsync(onlineExamId))
             return Result<OnlineExamDetailDto>.Failure(_localizer, OnlineExamConstants.Messages.ExamNotDraft, HttpStatusCode.Conflict);
 
+        // Scopes travel through the SAME validation as create (one type per exam, every
+        // target owned, never empty). A null list skips it entirely and leaves the
+        // recipients alone — that is what an older client sends.
         var validation = await ValidateCreateOrUpdateAsync(
             teacherId, request.Title, request.StartDateTime,
-            request.EndDateTime, request.PassPercentage, request.MaxViolations, scopes: null);
+            request.EndDateTime, request.PassPercentage, request.MaxViolations, request.Scopes);
         if (validation is not null)
             return Result<OnlineExamDetailDto>.Failure(_localizer, validation, HttpStatusCode.BadRequest);
 
         if (!exam.RowVersion.SequenceEqual(request.RowVersion))
             return Result<OnlineExamDetailDto>.Failure(_localizer, OnlineExamConstants.Messages.ConcurrencyConflict, HttpStatusCode.Conflict);
 
-        exam.Title = request.Title.Trim();
-        exam.Description = request.Description;
-        exam.Instructions = request.Instructions;
-        exam.StartDateTime = request.StartDateTime;
-        exam.EndDateTime = request.EndDateTime;
-        exam.PassPercentage = request.PassPercentage;
-        exam.Visibility = request.Visibility;
-        exam.BlockOnViolation = request.BlockOnViolation;
-        exam.MaxViolations = request.MaxViolations;
-        exam.UpdatedByUserId = actingUserId;
-        exam.UpdatedAt = DateTime.UtcNow;
+        // Compare before writing: an edit that leaves the recipients as they were must
+        // not churn the rows (AssignedAt/AssignedByUserId are the record of who aimed
+        // this exam at whom) and must not re-announce the exam to anyone.
+        bool replaceScopes = false;
+        if (request.Scopes is not null)
+        {
+            var current = await _unitOfWork.OnlineExamsRepo.GetScopesByExamIdsAsync(new[] { onlineExamId });
+            var currentKeys = current
+                .Select(s => (s.ScopeType, s.SessionId, s.SessionGroupId))
+                .ToHashSet();
+            // Compare what WOULD be stored, not what was sent, so a stray sibling id
+            // normalized away below does not read as a change.
+            var requestedKeys = request.Scopes
+                .Select(s => (
+                    s.ScopeType,
+                    SessionId: s.ScopeType == OnlineExamScopeType.Session ? s.SessionId : null,
+                    SessionGroupId: s.ScopeType == OnlineExamScopeType.SessionGroup ? s.SessionGroupId : null))
+                .ToHashSet();
+            replaceScopes = !currentKeys.SetEquals(requestedKeys);
+        }
 
-        await _unitOfWork.OnlineExamsRepo.UpdateAsync(exam);
+        // The scope swap is a set-based delete followed by inserts, so it lands before
+        // SaveChangesAsync rather than with it: without a transaction a failure after the
+        // delete would leave the exam addressed to nobody.
+        bool ownsTransaction = !_unitOfWork.HasActiveTransaction;
+        if (ownsTransaction) await _unitOfWork.BeginTransactionAsync();
 
         try
         {
-            await _unitOfWork.SaveChangesAsync();
+            var utcNow = DateTime.UtcNow;
+
+            exam.Title = request.Title.Trim();
+            exam.Description = request.Description;
+            exam.Instructions = request.Instructions;
+            exam.StartDateTime = request.StartDateTime;
+            exam.EndDateTime = request.EndDateTime;
+            exam.PassPercentage = request.PassPercentage;
+            exam.Visibility = request.Visibility;
+            exam.BlockOnViolation = request.BlockOnViolation;
+            exam.MaxViolations = request.MaxViolations;
+            exam.UpdatedByUserId = actingUserId;
+            exam.UpdatedAt = utcNow;
+
+            await _unitOfWork.OnlineExamsRepo.UpdateAsync(exam);
+
+            if (replaceScopes)
+            {
+                await _unitOfWork.OnlineExamsRepo.DeleteAllScopesForExamAsync(onlineExamId, teacherId);
+                await _unitOfWork.OnlineExamsRepo.AddScopesRangeAsync(
+                    BuildScopeEntities(request.Scopes!, onlineExamId, teacherId, actingUserId, utcNow));
+            }
+
+            try
+            {
+                await _unitOfWork.SaveChangesAsync();
+            }
+            catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+            {
+                if (ownsTransaction) await _unitOfWork.RollbackAsync();
+                return Result<OnlineExamDetailDto>.Failure(_localizer, OnlineExamConstants.Messages.ConcurrencyConflict, HttpStatusCode.Conflict);
+            }
+
+            if (ownsTransaction) await _unitOfWork.CommitAsync();
         }
-        catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        catch
         {
-            return Result<OnlineExamDetailDto>.Failure(_localizer, OnlineExamConstants.Messages.ConcurrencyConflict, HttpStatusCode.Conflict);
+            if (ownsTransaction) await _unitOfWork.RollbackAsync();
+            throw;
+        }
+
+        // Post-commit, best-effort: a class added to an exam that is already published
+        // would otherwise never hear about it — publishing is the only thing that
+        // announces an exam, and it already happened. The dispatcher re-resolves the
+        // audience live and skips anyone already notified (per-recipient idempotency),
+        // so this tells the new students only, and never fails the edit.
+        if (replaceScopes && exam.Status == OnlineExamStatus.Published)
+        {
+            try
+            {
+                _publishNotifications.DispatchOnlineExamPublished(teacherId, onlineExamId);
+            }
+            catch (Exception)
+            {
+                // Intentionally ignored — the recipients are saved either way.
+            }
         }
 
         var dto = await MapToDetailDtoAsync(exam);
@@ -837,6 +895,46 @@ public class OnlineExamService : IOnlineExamService
             return (null, Result<bool>.Failure(_localizer, OnlineExamConstants.Messages.QuestionsEditableOnlyInDraft, HttpStatusCode.Conflict));
 
         return (exam, null);
+    }
+
+    /// <summary>
+    /// Builds the scope rows for one exam, keeping ONLY the id that its
+    /// <see cref="OnlineExamScopeType"/> actually addresses, and only once per target.
+    /// <para>
+    /// The audience query picks its branches on <c>SessionId is not null</c> /
+    /// <c>SessionGroupId is not null</c> rather than on the scope type, and validation only
+    /// proves ownership of the id the type names — so a row carrying a stray sibling id would
+    /// pull in a group nobody checked. Normalizing here means such a row cannot be written
+    /// (the DB agrees: <c>CK_OnlineExamScopes_ScopeTypeMatchesFK</c>).
+    /// </para>
+    /// <para>
+    /// Naming the same class twice asks for exactly what naming it once asks for, so the
+    /// repeat is dropped rather than refused — left in, it would collide with
+    /// <c>UX_OnlineExamScopes_Exam_Type_Target</c> and surface as a 500.
+    /// </para>
+    /// </summary>
+    private static List<OnlineExamScope> BuildScopeEntities(
+        IEnumerable<OnlineExamScopeInputDto> scopes, long onlineExamId, long teacherId,
+        long actingUserId, DateTime utcNow)
+    {
+        return scopes
+            .Select(s => (
+                s.ScopeType,
+                SessionId: s.ScopeType == OnlineExamScopeType.Session ? s.SessionId : null,
+                SessionGroupId: s.ScopeType == OnlineExamScopeType.SessionGroup ? s.SessionGroupId : null))
+            .Distinct()
+            .Select(target => new OnlineExamScope
+            {
+                OnlineExamId = onlineExamId,
+                TeacherId = teacherId,
+                ScopeType = target.ScopeType,
+                SessionId = target.SessionId,
+                SessionGroupId = target.SessionGroupId,
+                AssignedByUserId = actingUserId,
+                AssignedAt = utcNow,
+                CreateAt = utcNow,
+            })
+            .ToList();
     }
 
     private async Task<string?> ValidateCreateOrUpdateAsync(

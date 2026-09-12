@@ -55,16 +55,18 @@ public sealed class OnlineExamsController : ModuleSixApiBaseController
     }
 
     /// <summary>
-    /// T8 — Edits an exam's metadata (title, description, dates, pass percentage, visibility).
-    /// Does not touch questions — use the questions endpoints for that. Requires the current
-    /// <c>RowVersion</c> for optimistic concurrency.
+    /// T8 — Edits an exam's metadata (title, description, dates, pass percentage, visibility) and,
+    /// optionally, its recipients: a non-null <c>Scopes</c> list REPLACES them under the same rules
+    /// as create, while omitting it leaves them untouched. Does not touch questions — use the
+    /// questions endpoints for that. Requires the current <c>RowVersion</c> for optimistic
+    /// concurrency, and is refused once any student has submitted.
     /// </summary>
     /// <param name="onlineExamId">The exam to edit.</param>
     /// <param name="request">Updated metadata including the RowVersion read from the last GET.</param>
     /// <response code="200">Exam updated.</response>
-    /// <response code="400">Validation failed.</response>
+    /// <response code="400">Validation failed (including an empty, mixed-type or foreign <c>Scopes</c> list).</response>
     /// <response code="404">Exam not found or not owned by the caller's tenant.</response>
-    /// <response code="409">RowVersion is stale — someone else edited this exam first.</response>
+    /// <response code="409">RowVersion is stale — someone else edited this exam first — or a student has already submitted.</response>
     /// <response code="401">Caller is not authenticated.</response>
     /// <response code="403">Caller lacks the <c>OnlineExam.ManageExams</c> permission.</response>
     [HttpPut("{onlineExamId:long}")]

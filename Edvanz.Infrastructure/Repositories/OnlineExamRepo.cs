@@ -46,6 +46,14 @@ public class OnlineExamRepo : GenericRepo<OnlineExam, long>, IOnlineExamRepo
     }
 
     /// <inheritdoc />
+    public async Task DeleteAllScopesForExamAsync(long onlineExamId, long teacherId)
+    {
+        await _context.OnlineExamScopes
+            .Where(s => s.OnlineExamId == onlineExamId && s.TeacherId == teacherId)
+            .ExecuteDeleteAsync();
+    }
+
+    /// <inheritdoc />
     public async Task PurgeExamGraphAsync(long onlineExamId)
     {
         // Leaf-first set-based deletes (every child FK is NoAction — nothing cascades

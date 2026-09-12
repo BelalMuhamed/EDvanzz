@@ -33,6 +33,19 @@ public interface IOnlineExamRepo : IGenericRepo<OnlineExam, long>
     Task AddScopesRangeAsync(IEnumerable<OnlineExamScope> scopes);
 
     /// <summary>
+    /// Hard-deletes every <c>OnlineExamScope</c> row of ONE exam, so the caller can
+    /// write a replacement set (T8 recipient edit). Tenant-scoped by
+    /// <paramref name="teacherId"/> as well as the exam id — a set-based delete has no
+    /// entity to carry the tenant check for it.
+    /// <para>
+    /// Set-based (<c>ExecuteDeleteAsync</c>), so it takes effect immediately rather than
+    /// at the next <c>SaveChangesAsync</c>: the caller MUST hold an open transaction, or
+    /// a later failure would leave the exam with no recipients at all.
+    /// </para>
+    /// </summary>
+    Task DeleteAllScopesForExamAsync(long onlineExamId, long teacherId);
+
+    /// <summary>
     /// Purges an exam's full graph leaf-first (§3.7), in the caller's ambient
     /// transaction: StudentQuestionAnswerOptions → StudentQuestionAnswers →
     /// StudentOnlineExamReports → OnlineExamQuestionOptions → OnlineExamQuestions →
