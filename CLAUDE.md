@@ -72,6 +72,23 @@ node index.js   # first run prints a QR code to link WhatsApp Web
 
 ---
 
+## 0b. Frontend → API map (`docs/frontend-api-map/`)
+
+**The Flutter mobile app's repo is NOT available here — do not ask for it.** Its entire API
+usage is documented in `docs/frontend-api-map/`: a README index + 12 chapters covering every
+screen and button → HTTP method + endpoint → the exact request keys the app sends (from its
+`toJson()` code) → the response keys it actually reads (from `fromJson()`), plus the error
+`code` values each screen special-cases and the offline sync replay contracts. Consult it
+BEFORE changing any response shape, key name, enum value, or error code — deployed clients
+parse exactly what those chapters record (including load-bearing misspellings like the
+assistants query param `isAcitve`; never "fix" a wire spelling without a coordinated app
+release). The README also lists endpoints no client calls today and modules that are
+mock-only in the app (Messages, Homework, most of the parent app) — do not expect traffic
+on them. Snapshot date 2026-09-12 (app branch `NewApp`): when a wire contract changes after
+that date, the matching chapter section must be updated in the same PR.
+
+---
+
 ## 1. Solution Structure
 
 ```
